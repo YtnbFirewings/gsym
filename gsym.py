@@ -271,8 +271,8 @@ class AddrInfo(object):
                     prev.dump()
                     curr.dump()
                 prev = curr
-            ii = InlineInfo(context.die, 0)
-            ii.dump()  # REMOVE THIS AFTER DEBUG
+            # ii = InlineInfo(context.die, 0)
+            # ii.dump()  # REMOVE THIS AFTER DEBUG
 
     def __cmp__(self, other):
         return cmp(self.range, other.range)
