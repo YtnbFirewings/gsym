@@ -143,3 +143,26 @@ an array of offsets and we will touch a minimal number of cache lines and
 pages when doing address lookups. The address offset index that is found
 is then used access the offset of the data and we go straight to the data
 that contains the address info.
+
+## Using gsym.py
+
+The gsym.py script can be used to create, dump and do lookups on gsym files.
+
+To create a gsym file, you specify the path to a mach-o or ELF file that
+contains DWARF debug info:
+
+```
+% gsym.py -o a.out.gsym a.out
+```
+
+To dump the contents of a gsym file:
+
+```
+% gsym.py --dump a.out.gsym
+```
+
+To lookup an address withing a gsym file:
+
+```
+% gsym.py --address 0x1000 a.out.gsym
+```
