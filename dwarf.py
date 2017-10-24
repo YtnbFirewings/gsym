@@ -2498,8 +2498,8 @@ class DebugRanges:
                 begin = data.get_address()
                 end = data.get_address()
                 if begin == 0 and end == 0:
-                    sorted_ranges = sorted(ranges)
-                    r = DebugRanges.Ranges(cu, offset, sorted_ranges)
+                    ranges.finalize()
+                    r = DebugRanges.Ranges(cu, offset, ranges)
                     self.ranges[offset] = r
                     return r
                 if addr_size == 4 and begin == 0xffffffff:
@@ -3322,7 +3322,7 @@ class DIE:
         if self.ranges is None:
             debug_ranges = self.get_debug_ranges()
             if debug_ranges:
-                self.ranges = debug_ranges
+                self.ranges = debug_ranges.ranges
             else:
                 self.ranges = AddressRangeList()
                 # No DW_AT_ranges attribute, look for high/low PC

@@ -193,6 +193,7 @@ class InlineInfo(object):
         self.call_line = 0
         self.ranges = None
         self.children = list()
+        self.die = die
         tag = die.get_tag()
         if tag == dwarf.DW_TAG_inlined_subroutine:
             call_file_idx = die.get_attribute_value_as_integer(dwarf.DW_AT_call_file)
@@ -214,13 +215,24 @@ class InlineInfo(object):
                 child_inline_info = InlineInfo(child_die, depth+1)
                 if child_inline_info.is_valid():
                     self.children.append(child_inline_info)
+
     def is_valid(self):
         return self.ranges is not None
+
+    def contains_inline_info(self):
+        if self.call_file and self.call_line > 0 and self.name:
+            return True
+        for child in self.children:
+            if child.contains_inline_info():
+                return True
+        return False
+
     def dump(self, f=sys.stdout, depth=0):
         if depth > 0:
             f.write(' ' *  depth)
         if self.ranges:
             self.ranges.dump(f=f)
+        f.write(' die=%#8.8x' % self.die.get_offset())
         if self.name:
             f.write(' name="%s"' % self.name)
         if self.call_file is not None:
@@ -272,7 +284,8 @@ class AddrInfo(object):
                     curr.dump()
                 prev = curr
             # ii = InlineInfo(context.die, 0)
-            # ii.dump()  # REMOVE THIS AFTER DEBUG
+            # if ii.contains_inline_info():
+            #     ii.dump()
 
     def __cmp__(self, other):
         return cmp(self.range, other.range)
