@@ -3467,8 +3467,12 @@ class DIE:
                     return parent.get_display_name()
                 else:
                     parent_decl_ctx = parent.get_decl_context_as_string()
+                    parent_name = parent.get_name()
                     if parent_decl_ctx:
-                        return parent_decl_ctx + '::' + parent.get_name()
+                        if parent_name:
+                            return parent_decl_ctx + '::' + parent_name
+                        else:
+                            return parent_decl_ctx
                     else:
                         return parent.get_name()
         return None
