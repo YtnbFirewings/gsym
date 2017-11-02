@@ -1221,9 +1221,12 @@ def main():
                                             line_entry.dump(prefix=inline_info.name + ' @ ', suffix=inline_suffix)
                                         else:
                                             print '                    ' + inline_info.name + ' @ ' + inline_stack[i-1].call_file + ':' + str(inline_stack[i-1].call_line) + inline_suffix
-                                print '                    ' + addr_info.name + ' @ ' + inline_stack[i-1].call_file + ':' + str(inline_stack[i-1].call_line)
+                                if i > 0:
+                                    print '                    ' + addr_info.name + ' @ ' + inline_stack[i-1].call_file + ':' + str(inline_stack[i-1].call_line)
+                                else:
+                                    line_entry.dump(prefix=addr_info.name + ' @ ')
                         else:
-                            line_entry.dump(prefix=addr_info.name + ' ')
+                            line_entry.dump(prefix=addr_info.name + ' @ ')
                     else:
                         print 'no line info'
                 else:
