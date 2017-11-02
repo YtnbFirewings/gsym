@@ -1213,6 +1213,8 @@ class StringTable:
         self.lookup_string = dict()
 
     def insert(self, s):
+        if s is None:
+            return 0
         if s in self.lookup_offset:
             return self.lookup_offset[s]
         else:
@@ -1235,10 +1237,11 @@ class StringTable:
         if is_string(s):
             if s in self.lookup_offset:
                 return self.lookup_offset[s]
+            error = 'string "%s" must exist in the string table' % (s)
         else:
             if s in self.lookup_string:
                 return self.lookup_string[s]
-        error = 'string "%s" must exist in the string table' % (s)
+            error = 'string %#x (%u) must exist in the string table' % (s, s)
         raise ValueError(error)
 
     def decode(self, data):

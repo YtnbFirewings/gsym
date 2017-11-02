@@ -15,6 +15,8 @@ import elf
 import file_extract
 import mach_o
 
+from pprint import pprint  # REMOVE THIS
+
 UINT8_MAX = 255
 UINT16_MAX = 65535
 UINT32_MAX = 4294967295
@@ -30,10 +32,21 @@ class File(object):
         if is_string(arg):
             self.dirname = os.path.dirname(arg)
             self.basename = os.path.basename(arg)
-        if isinstance(arg, file_extract.FileExtract):
+        elif isinstance(arg, file_extract.FileExtract):
             self.dirname = None
             self.basename = None
             self.decode(arg, strtab)
+        elif arg is None:
+            self.dirname = ''
+            self.basename = ''
+        else:
+            raise ValueError("invalid File.__init__ arg %s" % type(arg))
+
+    def get_path(self):
+        if self.dirname:
+            return os.path.join(self.dirname, self.basename)
+        else:
+            return self.basename
 
     def __lt__(self, rhs):
         if self.dirname != rhs.dirname:
@@ -70,11 +83,16 @@ class File(object):
 class Files(object):
     def __init__(self):
         self.files = list()
+        self.insert(File(''))
 
     def __getitem__(self, key):
         return self.files[key]
 
     def insert(self, file):
+        if not isinstance(file, File):
+            raise ValueError('Can only add File objects to Files class')
+        if file is None:
+            return 0
         index = -1
         try:
             index = self.files.index(file)
@@ -87,17 +105,22 @@ class Files(object):
 
     def dump(self, f=sys.stdout):
         for (i, file) in enumerate(self.files):
+            if i == 0:
+                continue
             f.write('[%3u] ' % (i))
             file.dump(f=f)
 
     def encode(self, out, strtab):
         out.align_to(4)
-        out.put_uint32(len(self.files))
-        for file in self.files:
-            file.encode(out, strtab)
+        num_files = len(self.files)
+        out.put_uint32(num_files - 1)
+        # Don't encode the empty file at index zero
+        for i in range(1, num_files):
+            self.files[i].encode(out, strtab)
 
     def decode(self, data, strtab):
         self.files = list()
+        self.insert(File(''))
         data.align_to(4)
         num_files = data.get_uint32()
         for i in range(num_files):
@@ -112,8 +135,9 @@ class LineEntry(object):
         self.fullpath = fullpath
         self.line = line
 
-    def dump(self, f=sys.stdout):
-        f.write("%#16.16x: %s:%u\n" % (self.addr, self.fullpath, self.line))
+    def dump(self, f=sys.stdout, prefix='', suffix=''):
+        f.write("%#16.16x: %s%s:%u%s\n" % (self.addr, prefix, self.fullpath,
+                                           self.line, suffix))
 
 
 DBG_END_SEQUENCE = 0x00
@@ -194,45 +218,137 @@ class InlineInfo(object):
         self.ranges = None
         self.children = list()
         self.die = die
-        tag = die.get_tag()
-        if tag == dwarf.DW_TAG_inlined_subroutine:
-            call_file_idx = die.get_attribute_value_as_integer(dwarf.DW_AT_call_file)
-            self.name = die.get_mangled_name()
-            if self.name is None:
-                self.name = die.get_name()
-            self.call_file = die.cu.get_file(call_file_idx)
-            self.call_line = die.get_attribute_value_as_integer(dwarf.DW_AT_call_line)
-            self.ranges = die.get_die_ranges()
-        elif tag == dwarf.DW_TAG_lexical_block:
-            self.ranges = die.get_die_ranges()
-        elif depth == 0 and tag == dwarf.DW_TAG_subprogram:
-            self.name = die.get_mangled_name()
-            if self.name is None:
-                self.name = die.get_name()
-            self.ranges = die.get_die_ranges()
-        if self.ranges is not None:
-            for child_die in die.get_children():
-                child_inline_info = InlineInfo(child_die, depth+1)
-                if child_inline_info.is_valid():
-                    self.children.append(child_inline_info)
+        if die is not None:
+            tag = die.get_tag()
+            check_children = True
+            if tag == dwarf.DW_TAG_inlined_subroutine:
+                call_file_idx = die.get_attribute_value_as_integer(dwarf.DW_AT_call_file)
+                self.name = die.get_display_name()
+                self.call_file = die.cu.get_file(call_file_idx)
+                self.call_line = die.get_attribute_value_as_integer(dwarf.DW_AT_call_line)
+                self.ranges = die.get_die_ranges()
+            elif tag == dwarf.DW_TAG_lexical_block:
+                self.ranges = die.get_die_ranges()
+            elif tag == dwarf.DW_TAG_subprogram:
+                # Skip functions declared within functions. A function within
+                # a function will be a DW_TAG_subprogram with a depth > 0
+                if depth == 0:
+                    self.name = die.get_display_name()
+                    self.ranges = die.get_die_ranges()
+                else:
+                    check_children = False
+            if check_children and self.ranges is not None:
+                for child_die in die.get_children():
+                    child_inline_info = InlineInfo(child_die, depth+1)
+                    if child_inline_info.is_valid():
+                        self.children.append(child_inline_info)
+
+    def decode(self, base_addr, strtab, files, data):
+        num_ranges = data.get_uleb128()
+        if num_ranges == 0:
+            return False
+        self.ranges = dwarf.AddressRangeList()
+        for i in range(num_ranges):
+            lo = data.get_uleb128()
+            # hi = data.get_uleb128()
+            # self.ranges.append(dwarf.AddressRange(lo+base_addr, hi+base_addr))
+            hi = data.get_uleb128()
+            self.ranges.append(dwarf.AddressRange(lo+base_addr, hi+lo+base_addr))
+        self.ranges.finalize()
+        has_children = data.get_uint8()
+        self.name = strtab.get(data.get_uint32())
+        call_file_idx = data.get_uleb128()
+        if call_file_idx > 0:
+            self.call_file = files[call_file_idx].get_path()
+        else:
+            self.call_file = None
+        self.call_line = data.get_uleb128()
+        if has_children:
+            child = InlineInfo(None, 0)
+            while child.decode(self.ranges.ranges[0].lo, strtab, files, data):
+                self.children.append(child)
+                child = InlineInfo(None, 0)
+        return True
+
+    def encode(self, base_addr, strtab, files, data):
+        if not self.contains_inline_info():
+            return
+        children_have_inline_info = self.children_have_inline_info()
+        num_ranges = len(self.ranges)
+        # Emit the number of address ranes for this entry first. We do this
+        # so we can emit a num_ranges of zero to terminate a sibling chain.
+        data.put_uleb128(num_ranges)
+        # Emit all ranges as offsets from the start of the function
+        for range in self.ranges.ranges:
+            start_offset = range.lo - base_addr
+            end_offset = range.hi - range.lo
+            data.put_uleb128(start_offset)
+            data.put_uleb128(end_offset)
+
+        # Emit a byte that indicates if this has children
+        data.put_uint8(children_have_inline_info)
+        # Emit the info as function name string table index,
+        # call file file index and the call line.
+        data.put_uint32(strtab.insert(self.name))
+        data.put_uleb128(files.insert(File(self.call_file)))
+        data.put_uleb128(self.call_line)
+
+        if children_have_inline_info:
+            for child in self.children:
+                # Make child ranges relative to the lowest address in this
+                # inline info. This keeps the offsets as small as possible
+                # relative to the parent ranges and since we encode them with
+                # ULEB128 values,
+                child.encode(self.ranges.ranges[0].lo, strtab, files, data)
+            # Terminate sibling chain
+            data.put_uleb128(0)
+
+    def get_inlined_stack(self, addr, inline_stack):
+        '''Fill in the "inline_stack" list object for a given address. The
+           list will contain the inline call stack for a given address. The
+           first entry is the deepest most inlined function function, and
+           subsequent entries are the call stack going down the the concrete
+           function.'''
+        matching_range = self.ranges.get_range_for_address(addr)
+        if matching_range is None:
+            return False
+        # if len(inline_stack) == 0:
+        #     inline_stack.append(self)
+        # else:
+        #     inline_stack.insert(0, self)
+        inline_stack.insert(0, self)
+        for child in self.children:
+            if child.get_inlined_stack(addr, inline_stack):
+                break
+        return True
 
     def is_valid(self):
         return self.ranges is not None
 
-    def contains_inline_info(self):
-        if self.call_file and self.call_line > 0 and self.name:
-            return True
+    def has_inline_info(self):
+        '''Return True if this object has inline info (ignoring children)'''
+        return (self.call_file and self.call_line > 0 and self.name and
+                self.ranges and len(self.ranges) > 0)
+
+    def children_have_inline_info(self):
+        '''Return True if any of this object's children have inline info'''
         for child in self.children:
             if child.contains_inline_info():
                 return True
         return False
+
+    def contains_inline_info(self):
+        '''Return True if this object or if any of this object's children
+           have inline info'''
+        return self.has_inline_info() or self.children_have_inline_info()
 
     def dump(self, f=sys.stdout, depth=0):
         if depth > 0:
             f.write(' ' *  depth)
         if self.ranges:
             self.ranges.dump(f=f)
-        f.write(' die=%#8.8x' % self.die.get_offset())
+        if self.die:
+            f.write(' die=%#8.8x' % self.die.get_offset())
         if self.name:
             f.write(' name="%s"' % self.name)
         if self.call_file is not None:
@@ -246,17 +362,33 @@ class InlineInfo(object):
 class AddrInfo(object):
     EndOfList = 0
     LineTable = 1
-    UnwindInfo = 2
-    InlineInfo = 3
+    InlineInfo = 2
+    UnwindInfo = 3
+
+    @classmethod
+    def get_info_type_as_string(cls, info_type):
+        if info_type == cls.EndOfList:
+            return 'EndOfList'
+        if info_type == cls.LineTable:
+            return 'LineTable'
+        if info_type == cls.InlineInfo:
+            return 'InlineInfo'
+        if info_type == cls.UnwindInfo:
+            return 'UnwindInfo'
+        return str(info_type)
 
     def __init__(self, context=None):
         self.lines = list()
+        self.inline_info = -1
+        self.data_info = list()
         if context is None:
             self.name = None
             self.range = dwarf.AddressRange(0, 0)
+            self.die = None
         elif isinstance(context, dwarf.DIERanges.Range):
             self.name = context.die.get_display_name()
             self.range = dwarf.AddressRange(context.lo, context.hi)
+            self.die = context.die
             cu = context.die.cu
             line_table = cu.get_line_table()
             rows = line_table.get_rows_for_range(self.range)
@@ -283,9 +415,15 @@ class AddrInfo(object):
                     prev.dump()
                     curr.dump()
                 prev = curr
-            # ii = InlineInfo(context.die, 0)
-            # if ii.contains_inline_info():
-            #     ii.dump()
+
+    def get_inline_info(self):
+        if self.inline_info == -1:
+            self.inline_info = None
+            if self.die:
+                ii = InlineInfo(self.die, 0)
+                if ii.contains_inline_info():
+                    self.inline_info = ii
+        return self.inline_info
 
     def __cmp__(self, other):
         return cmp(self.range, other.range)
@@ -300,12 +438,23 @@ class AddrInfo(object):
             match_line_entry = line_entry
         return match_line_entry
 
-    def dump(self, f=sys.stdout, dump_lines=True):
+    def dump(self, f=sys.stdout, dump_lines=True, dump_inline=True):
         self.range.dump(f=f)
         f.write(' "%s"\n' % (self.name))
-        if dump_lines:
+        if self.data_info:
+            f.write('Address Data Info:\n')
+            for (info_type, info_len, info_offset) in self.data_info:
+                f.write('%#8.8x: %-12s length=%#x (%u)\n' % (info_offset,
+                        AddrInfo.get_info_type_as_string(info_type), info_len,
+                        info_len))
+        if dump_lines and len(self.lines):
+            f.write('LineTable:\n')
             for (i, line_entry) in enumerate(self.lines):
                 line_entry.dump(f=f)
+        if dump_inline:
+            if self.inline_info != -1 and self.inline_info is not None:
+                f.write('InlineInfo:\n')
+                self.inline_info.dump(f=f)
 
     def encode_lines(self, fullpath_to_index, debug, data, min, max):
         all_special = True
@@ -374,7 +523,7 @@ class AddrInfo(object):
         data.put_uint8(DBG_END_SEQUENCE)
         return all_special
 
-    def encode(self, data, strtab, fullpath_to_index):
+    def encode(self, data, strtab, files, fullpath_to_index):
         # self.dump()
         debug = False
         num_lines = len(self.lines)
@@ -382,11 +531,12 @@ class AddrInfo(object):
         data.put_uint32(self.range.size())
         # Write the 32 bit string table offset for the name of the function
         data.put_uint32(strtab.get(self.name))
-        # Write the number of line table entries that follow
-        data.put_uint32(self.LineTable)
-        data_size_offset = data.tell()
-        data.put_uint32(0)  # We will fixup this value after writing line table
         if num_lines > 0:
+            # Write the number of line table entries that follow
+            data.put_uint32(self.LineTable)
+            data_size_offset = data.tell()
+            # We will fixup this size value after writing data
+            data.put_uint32(0)
             prev_addr = self.range.lo
             prev_line = 1
             min_line_delta = sys.maxint
@@ -464,15 +614,23 @@ class AddrInfo(object):
             # print('Best encoding result: %u bytes, min=%i, max=%i' % (
             #     len(best_encoding[0]), best_encoding[1], best_encoding[2]))
             data.file.write(best_encoding[0])
-        else:
-            # No line entries, just emit an end sequence
-            if debug:
-                print('%#8.8x: DBG_END_SEQUENCE\n' % (data.tell()))
-            data.put_uint8(DBG_END_SEQUENCE)
-        line_table_size = data.tell() - data_size_offset
-        data.fixup_uint_size(4, line_table_size, data_size_offset)
+            data_size = data.tell() - data_size_offset
+            data.fixup_uint_size(4, data_size, data_size_offset)
+
+        # Write out the inline information if any
+        inline_info = self.get_inline_info()
+        if inline_info:
+            # print 'encoding inline info for %#16.16x:\n' % (self.range.lo)
+            # inline_info.dump()
+            data.put_uint32(self.InlineInfo)
+            data_size_offset = data.tell()
+            # We will fixup this size value after writing data
+            data.put_uint32(0)
+            inline_info.encode(self.range.lo, strtab, files, data)
+            data_size = data.tell() - data_size_offset
+            data.fixup_uint_size(4, data_size, data_size_offset)
+        # Terminate the data for this address info
         data.put_uint32(self.EndOfList)
-        data.put_uint32(0)
 
     def decode(self, addr, data, strtab, files):
         debug = False
@@ -489,6 +647,7 @@ class AddrInfo(object):
             if info_type == self.EndOfList:
                 break
             info_len = data.get_uint32()
+            self.data_info.append((info_type, info_len, data.tell()))
             if info_type == self.LineTable:
                 # Read the min and max line delta
                 min_line_delta = data.get_sleb128()
@@ -550,6 +709,9 @@ class AddrInfo(object):
                         if debug:
                             print('%#8.8x: DBG_END_SEQUENCE\n' % (offset))
                         break
+            if info_type == self.InlineInfo:
+                self.inline_info = InlineInfo(None, 0)
+                self.inline_info.decode(self.range.lo, strtab, files, data)
 
 
 class Symbolicator(object):
@@ -893,11 +1055,6 @@ class Symbolicator(object):
             logfile.write('addr_info_offsets_size = %u\n' % (end_addr_offsets_offset - addr_offsets_offset))
 
         # ---------------------------------------------------------------------
-        # Write out the string table
-        # ---------------------------------------------------------------------
-        strtab.encode(strtab_data)
-
-        # ---------------------------------------------------------------------
         # Write out the files
         # ---------------------------------------------------------------------
         if logfile:
@@ -918,7 +1075,7 @@ class Symbolicator(object):
                 addr_info.dump(f=logfile)
             data.align_to(4)
             addr_offsets.append(data.tell())
-            addr_info.encode(data, strtab, fullpath_to_index)
+            addr_info.encode(data, strtab, files, fullpath_to_index)
 
         end_addr_infos_offset = data.tell()
         if logfile:
@@ -932,6 +1089,11 @@ class Symbolicator(object):
         data.seek(addr_offsets_offset)
         for addr_offset in addr_offsets:
             data.put_uint32(addr_offset)
+
+        # ---------------------------------------------------------------------
+        # Write out the string table
+        # ---------------------------------------------------------------------
+        strtab.encode(strtab_data)
 
         data_file.close()
         strtab_file.close()
@@ -1044,10 +1206,24 @@ def main():
                 symbolicator = Symbolicator(path)
                 addr_info = symbolicator.lookup_addr_info(addr)
                 if addr_info:
-                    addr_info.dump(dump_lines=False)
+                    if options.verbose:
+                        addr_info.dump(dump_lines=True, dump_inline=True)
                     line_entry = addr_info.lookup_line_addr(addr)
                     if line_entry:
-                        line_entry.dump()
+                        inline_info = addr_info.get_inline_info()
+                        if inline_info:
+                            inline_stack = list()
+                            inline_suffix=' [inlined]'
+                            if inline_info.get_inlined_stack(addr, inline_stack):
+                                for (i, inline_info) in enumerate(inline_stack):
+                                    if inline_info.has_inline_info():
+                                        if i == 0:
+                                            line_entry.dump(prefix=inline_info.name + ' @ ', suffix=inline_suffix)
+                                        else:
+                                            print '                    ' + inline_info.name + ' @ ' + inline_stack[i-1].call_file + ':' + str(inline_stack[i-1].call_line) + inline_suffix
+                                print '                    ' + addr_info.name + ' @ ' + inline_stack[i-1].call_file + ':' + str(inline_stack[i-1].call_line)
+                        else:
+                            line_entry.dump(prefix=addr_info.name + ' ')
                     else:
                         print 'no line info'
                 else:

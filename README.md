@@ -103,7 +103,7 @@ Definitions:
   enum class uint32_t {
     EndOfList = 0,
     LineTable = 1,
-    UnwindInfo = 2
+    InlineInfo = 2
   } InfoType;
   typedef struct {
     InfoType type;
@@ -143,6 +143,153 @@ an array of offsets and we will touch a minimal number of cache lines and
 pages when doing address lookups. The address offset index that is found
 is then used access the offset of the data and we go straight to the data
 that contains the address info.
+
+#### INFOTYPE SPECIFICATIONS
+
+gsym can support an expandable amount of information types. This allows this
+file format to be used to store more information in the future for a given
+address range. The gsym.py script currently supports generating two types of
+data blocks: InfoType::LineTable and InfoType::InlineInfo.
+
+##### InfoType::LineTable
+
+The line table is encoded using a modified version of DWARF line tables.
+The line tables are trimmed down to only support address to source file and
+source line number. The data is encoded using a header followed by opcodes that
+describe a state machine that will create line table rows as it is being parsed.
+As line table opcods are parsed, a state machine maintains a state that is
+defined by the following structure:
+```
+typedef struct {
+  uint64_t address;
+  uint32_t file_idx;
+  uint32_t file_line;
+} LineTableRow;
+```
+As the line table opcodes are evaluated they fill in the current LineTableRow
+and possibly push one of these structures into an array. The array that results
+after parsing all opcodes forms the line table for the address range.
+
+The line table is encoded as an array of LineTableRow objects where the address
+is always increasing. The file_idx and file_line can increase or decrease, but
+addresses only increase in value.
+
+The following opcodes are defined:
+
+Definitions:
+```
+DBG_END_SEQUENCE  = 0x00  # End of the line table
+DBG_SET_FILE      = 0x01  # Set LineTableRow.file_idx, don't push a row
+DBG_ADVANCE_PC    = 0x02  # Increment LineTableRow.address, and push a row
+DBG_ADVANCE_LINE  = 0x03  # Set LineTableRow.file_line, don't push a row
+DBG_FIRST_SPECIAL = 0x04  # All special opcodes push a row.
+```
+
+Some opcodes are followed by arguments and some opcodes will cause a row to be
+pushed into the final line table array.
+
+###### DBG_END_SEQUENCE
+
+Argument: none
+Pushes row: no
+Description: This opcode terminates the current line sequence.
+
+###### DBG_SET_FILE
+
+Argument: uleb128
+Pushes row: no
+Description: This opcode sets LineTableRow.file_idx in the parse state setting
+up the current state for a future opcode that will push a row.
+
+###### DBG_ADVANCE_PC
+
+Argument: uleb128
+Pushes row: yes
+Description: This opcode increments LineTableRow.address in the parse state by
+the unsigned value in the argument. It then pushes the current state onto the
+line table array. Clients should set the file and the line before using this
+opcode since it does push a row.
+
+###### DBG_ADVANCE_LINE
+
+Argument: sleb128
+Pushes row: yes
+Description: This opcode increments LineTableRow.file_line in the parse state by
+the unsigned value in the argument.
+
+###### DBG_FIRST_SPECIAL - 255
+
+Argument: none
+Pushes row: yes
+These special arguments contain both a address and line increment. The address
+and line increment is calculated using the min and max line range from the line
+table header information. This opcode will increment the address and line and
+push a row onto the final line table. The LineTableHeader.min_delta and
+LineTableHeader.max_delta are used to encode the address and line increment
+exactly as DWARF does.
+
+##### Header
+The line table data starts with a line table header.
+
+Data layout on disk:
+```
+typedef struct {
+  sleb128 min_delta;
+  sleb128 max_delta;
+  uleb128 first_line;
+} LineTableHeader;
+```
+##### Parsing
+
+Parsing the line table involves parsing the header and initializing a
+LineTableRow structure with appropriate values. The LineTableRow.address is
+initialized with the start address of the address info. LineTableRow.file_idx
+is initialized with LineTableHeader.first_line. LineTablerow.file_line is
+initiazed with 1. After the initialization we are ready to parse the line table
+opcodes. As each opcode is parsed current LineTableRow is updated and some
+opcodes push a row to generate what becomes the final line table. Once all
+opcodes are parsed, we will a complete line table.
+
+##### InfoType::InlineInfo
+
+Inline information encodes all inline function names and address ranges along
+with the calling file and calling line information. Encoding this information
+allows us to unwind inline call stacks given a single address. Symbolicating a
+single address allows us to get N stack frames and allows us to trace the call
+back to the original position of the concrete function in the source instead of
+only seeing the deepest inline function call.
+
+Inline info is encoded as follows:
+
+```
+typedef struct {
+  uleb128 addr_offset;
+  uleb128 size;
+} OffsetRange;
+
+typedef struct {
+  uleb128 num_ranges;
+  OffsetRange ranges[num_ranges];
+  uint8_t has_children;
+  uint32_t name; // String index of inline function name
+  uleb128 call_file;
+  uleb128 call_line;
+  InlineInfo children[];
+} InlineInfo;
+```
+
+###### Encoding
+
+Each inline info struct contains one or more address ranges. All address ranges
+are encoded as offsets from the parent. For the top level InlineInfo structs,
+the offset is from the function start address. For children of a InlineInfo,
+the offset is from the first address in the first range of the parent
+InlineInfo. Encoding the address ranges for inline functions as offsets from
+the parent base address allows efficient encoding of address ranges using
+ULEB128 numbers by keeping these offsets as low as possible. If an InlineInfo
+struct has children (InlineInfo.has_children != 0), then children are encoded immediately following the current InlineInfo. The sibling chain is terminated
+by a InlineInfo with a "num_ranges" set to zero. This encoding mechanism is
+very easy to implement recursively.
 
 ## Using gsym.py
 
