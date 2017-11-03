@@ -1,7 +1,53 @@
 # gsym
-Python code that can parse mach-o and ELF files, parse DWARF debug info and generate a new symbolication format.
+
+The code in this repository is designed to help finalized the "gsym" file
+format. It currently uses python to generate the format from DWARF. This allows
+us to quickly iterate on the design of the file format. Eventually native tools,
+hopefully the compiler or linker, will generate and parse this information.
+
+## What is gsym?
+
+The gsym format is designed to store address lookup information efficiently.
+Many tools do symbolication of crash logs and stack back tracing. These tools
+require quick and efficient address lookups where the fewest number of pages
+are touched during the lookup itself. Many tools currently parse DWARF debug
+information for this, but DWARF is a highly compressed format that requires a
+lot of parsing, extra memory, generation of lookup tables and manual searching
+for address information and it makes it expensive and complex. For exmaple a
+symbolication tool needs to be able to parse the DWARF debug info in .debug_info
+and .debug_abbrev in order to get to the line tables that are encoded in the
+.debug_line section. The address accelerator tables included in DWARF are random
+indexes of address where the address lookup table points you to a compile unit
+that contains the address. It doesn't point to a location within the compile
+unit, you must manually parse all information in each compile unit to find
+the function information you are looking for. To make matters worse, the DWARF
+accelerator tables are not always included in DWARF which means you must parse
+all DWARF from all compile units and create your own address lookup tables. Once
+you find your funciton information, you can get to the line table for the
+compile unit. This line table contains all of the source line information for
+all functions in the compile unit. This means you must search all line
+information for all functions to eventually find the source file and line
+information you need. The DWARF line tables for each compile unit, in DWARF 4
+and earlier versions, store the files used in the line table by duplicating the
+paths from other line tables in the line table prologue. If you want to extract
+the inline call stack, you must return the the function's debug info and parse
+all of the children of that debug information to discover the inlined call
+stack.
+
+The gsym file format is designed to solve all of the above issues by designing
+a file format that can be mapped into read only memory that can be shared
+between multiple processes. The file format requires minimal setup to map and
+use and doesn't require any parsing or sorting prior to doing any lookups. The
+information is sorted and doesn't require any manual computation or indexing
+prior to doing lookups. The file format also store the line table information
+for a function in a line table that is only for the source lines in that
+function. All file path information is stored efficiently and is shared between
+all line tables.
 
 # Introduction
+
+The current code is in Python and can parse DWARF information found in mach-o
+and ELF file generates a ELF or mach-o files that contain the new gsym format.
 
 The gsym.py file contains a class named gsym.Symbolicator that is a
 class for a new symbolication format that uses sections within object
@@ -20,7 +66,7 @@ To save space many things have been done:
   We can look into storing 24 bit offsets in the future if needed but I
   didn't want to have to do any processing to decode 24 bit integers as it
   might affect the address lookup speed.
-- compress C++ strings that by removing default parameters for STL code
+- compress C++ strings by removing default parameters for STL code
   and changing names into shorter forms (see shortencpp.py).
 - use a string table for all strings that contains uniqued strings. The
   string table can be shared with the current executable or debug info which
@@ -29,14 +75,17 @@ To save space many things have been done:
 - store file paths by separating the directory and basename. These are
   stored as offsets into the string table. This allows file directories
   to share the same string in the string table. Unlike DWARF, all files are
-  stored in one table for all line tables for all funcitons.
+  stored in one table for all line tables for all functions.
 - store line tables efficiently using a technique similar to DWARF line
   tables.
+- store inline information efficiently to allow inline call stacks to be
+  extracted from a single address
 
 ## File Format Details
 The file format is designed to be able to be memory mapped into memory and
-used as is. Each lookup will only expand the expensive address info data on
-demand.
+used as is. Each lookup will only expand any information for a given address
+on demand. This means the address lookup information is all grouped together
+and touches as few pages as possible when doing the lookups.
 
 The data is placed two sections in the object file. The main section contains
 the header, address table, address info offsets, files and the actual address
@@ -89,14 +138,13 @@ Data layout on disk:
 ```
 
 #### ADDRESS INFOS
-Each offset in the addr_info_offsets[] array points to one of these.
-The data is designed to carry one or more types of information for
-the address ranges in question. This type of the information block
-is specified by the InfoType enumeration below. Each Information block
-is preceded by the 32 bit InfoType enumeration and followed by a 32
-bit size in bytes of the data for that type. This allows parsers to
-quickly look for the data they care about and skip any data they don't
-want to parse.
+Each offset in the addr_info_offsets[] array points to the data for a given
+address. The data is designed to carry one or more types of information for
+an address range. This type of the information block is specified by the
+InfoType enumeration below. Each Information block is preceded by the 32 bit
+InfoType enumeration and followed by a 32 bit size in bytes of the data for
+that type. This allows parsers to quickly look for the data they care about
+for a given address and skip any data they don't need.
 
 Definitions:
 ```
@@ -118,8 +166,7 @@ Data layout on disk:
   uint32_t name;    // String table offset in the string table
   InfoEntry info[]; // Variable size chunks if formatted data
                     // associated with this address. Terminated by
-                    // a InfoEntry struct with a type of
-                    // InfoType::EndOfList and a length of zero.
+                    // a InfoEntry struct with a type of InfoType::EndOfList.
                     // Each InfoEntry struct is aligned on a 32 bit
                     // boundary.
 ```                          
