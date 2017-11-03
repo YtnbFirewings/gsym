@@ -17,12 +17,12 @@ for address information. This makes DWARF expensive and complex to use for
 address lookups. A symbolication tool that uses DWARF needs to be able to parse
 the debug info in .debug_info and .debug_abbrev in order to get to the line
 tables that are encoded in the .debug_line section. The address accelerator
-tables included in DWARF are random indexes of address where the address
-table points you to a compile unit that contains the address. It doesn't point
+tables included in DWARF are random indexes of addresses where the table entries
+direct you to a compile unit that contains the address. It doesn't point
 to the exact function or variable within the compile unit, you must manually
 parse all information in each compile unit to find the function information
 you are looking for. To make matters worse, the DWARF accelerator tables are not
-always included which means you must parse all DWARF from all compile units and
+always included, which means you must parse all DWARF from all compile units and
 create your own address lookup tables. Once you find your function information,
 you can get to the line table for the compile unit. This line table contains
 all of the source line information for all functions in the compile unit. This
