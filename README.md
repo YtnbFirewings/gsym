@@ -11,35 +11,36 @@ The gsym format is designed to store address lookup information efficiently.
 Many tools do symbolication of crash logs and stack back tracing. These tools
 require quick and efficient address lookups where the fewest number of pages
 are touched during the lookup itself. Many tools currently parse DWARF debug
-information for this, but DWARF is a highly compressed format that requires a
+information for this. DWARF is a highly compressed format that requires a
 lot of parsing, extra memory, generation of lookup tables and manual searching
-for address information and it makes it expensive and complex. For exmaple a
-symbolication tool needs to be able to parse the DWARF debug info in .debug_info
-and .debug_abbrev in order to get to the line tables that are encoded in the
-.debug_line section. The address accelerator tables included in DWARF are random
-indexes of address where the address lookup table points you to a compile unit
-that contains the address. It doesn't point to a location within the compile
-unit, you must manually parse all information in each compile unit to find
-the function information you are looking for. To make matters worse, the DWARF
-accelerator tables are not always included in DWARF which means you must parse
-all DWARF from all compile units and create your own address lookup tables. Once
-you find your funciton information, you can get to the line table for the
-compile unit. This line table contains all of the source line information for
-all functions in the compile unit. This means you must search all line
-information for all functions to eventually find the source file and line
-information you need. The DWARF line tables for each compile unit, in DWARF 4
-and earlier versions, store the files used in the line table by duplicating the
-paths from other line tables in the line table prologue. If you want to extract
-the inline call stack, you must return the the function's debug info and parse
-all of the children of that debug information to discover the inlined call
-stack.
+for address information. This makes DWARF expensive and complex to use for
+address lookups. A symbolication tool that uses DWARF needs to be able to parse
+the debug info in .debug_info and .debug_abbrev in order to get to the line
+tables that are encoded in the .debug_line section. The address accelerator
+tables included in DWARF are random indexes of address where the address
+table points you to a compile unit that contains the address. It doesn't point
+to the exact function or variable within the compile unit, you must manually
+parse all information in each compile unit to find the function information
+you are looking for. To make matters worse, the DWARF accelerator tables are not
+always included which means you must parse all DWARF from all compile units and
+create your own address lookup tables. Once you find your function information,
+you can get to the line table for the compile unit. This line table contains
+all of the source line information for all functions in the compile unit. This
+means you must search all line information for all functions to find the source
+file and line information you need for your address. The DWARF line tables for
+each compile unit, in DWARF 4 and earlier versions, store the files used in the
+line table, and for other DWARF info outside of the line table, by duplicating
+the paths from other line tables in each compile unit's line table prologue.
+If you want to extract the inline call stack for a given address, you must
+return the the function's debug info and parse all of the children of that
+debug information to discover the inlined call stack.
 
 The gsym file format is designed to solve all of the above issues by designing
-a file format that can be mapped into read only memory that can be shared
+a file format that can be mapped into read only memory and can be shared
 between multiple processes. The file format requires minimal setup to map and
 use and doesn't require any parsing or sorting prior to doing any lookups. The
 information is sorted and doesn't require any manual computation or indexing
-prior to doing lookups. The file format also store the line table information
+prior to doing lookups. The file format also stores the line table information
 for a function in a line table that is only for the source lines in that
 function. All file path information is stored efficiently and is shared between
 all line tables.
