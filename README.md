@@ -92,9 +92,10 @@ The data is placed two sections in the object file. The main section contains
 the header, address table, address info offsets, files and the actual address
 info data. This section is named "__gsym" in mach-o and ".gsym" in all other
 file formats. The symbolication information requires a string table. The string
-table section name is specified in the header. This allows the string table to
-share strings from an existing string table (like ".strtab" or ".debug_str")
-or it can have its own stand alone string table.
+table is specified in the GSYM header with a string table file offset and string
+table byte size. This allows the string table to share strings with existing
+string tables (like ".strtab" or ".debug_str") or it can have its own stand
+alone string table.
 
 ### The format of the main section section is:
 #### HEADER
@@ -102,17 +103,12 @@ Data layout on disk:
 ```
     uint32_t magic;
     uint16_t version;
-    uint8_t  addr_off_size;   // Size of addr_off_t
+    uint8_t  addr_off_size;  // Size of addr_off_t
     uint8_t  pad;
     uint64_t base_address;
     uint32_t num_addrs;
-    char strtab_section_name[]; // Name of string table section
-    // Addresses are stored as offsets from "base_address" and the
-    // addr_off_t size will vary depending on the max address - min
-    // address of all functions in this file. This allows us to store
-    // address offsets as offsets from the base_address so we don't
-    // need to store full sized addresses for each function address.
-    // Usually these are uint16_t or uint32_t values.
+    uint32_t strtab_offset;  // File offset for string table
+    uint32_t strtab_size;    // File size for string table
     .align(addr_off_size)
     addr_off_t addr_offsets[num_addrs];
     // Each address in addr_offsets has a corresponding entry in

@@ -17,6 +17,13 @@ SEEK_CUR = 1
 SEEK_END = 2
 
 
+def align_to(value, align):
+    delta = value % align
+    if delta != 0:
+        pad = align - delta
+        return value + pad
+    return value
+
 def dump_memory(base_addr, data, num_per_line, outfile):
 
     data_len = len(data)

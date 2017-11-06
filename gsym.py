@@ -715,138 +715,7 @@ class AddrInfo(object):
 
 
 class Symbolicator(object):
-    '''A class for a new symboliocation format that uses sections withing object
-    files (ELF, Mach-o or COFF) to contain the symbolication data.
-
-    The gsym file format efficiently stores information for addresses within an
-    executable or shared library.
-
-    For any questions or modification requests on this file format please
-    contact: gclayton@fb.com
-
-    The information is designed to efficiently lookup addresses and provide
-    function name, source file and source line information for a given address.
-    To save space many things have been done:
-    - binary file format
-    - store the address lookup table as a base address + address offsets where
-      the address offsets can be smaller than a full sized 32 or 64 bit
-      address. The address offsets will be dynamic stored as uint16_t,
-      uint32_t, or uint64_t depending on the max address difference in the file.
-      We can look into storing 24 bit offsets in the future if needed but I
-      didn't want to have to do any processing to decode 24 bit integers as it
-      might affect the address lookup speed.
-    - compress C++ strings that by removing default parameters for STL code
-      and changing names into shorter forms (see shortencpp.py).
-    - use a string table for all strings that contains uniqued strings. The
-      string table can be shared with the current executable or debug info which
-      allows this information to be efficiently encoded in existing debug info
-      files.
-    - store file paths by separating the directory and basename. These are
-      stored as offsets into the string table. This allows file directories
-      to share the same string in the string table. Unlike DWARF, all files are
-      stored in one table for all line tables for all funcitons.
-    - store line tables efficiently using a technique similar to DWARF line
-      tables.
-
-    The file format is designed to be able to be memory mapped into memory and
-    used as is. Each lookup will only expand the expensive address info data on
-    demand.
-
-    The data is placed two sections in the object file:
-    - main data: the header and addresses, address info offsets, files and
-      the actual address info data are all contained in this section. This
-      section is named "__gsym" in mach-o and ".gsym" in all other file formats.
-      The format of the section is:
-      HEADER
-        Data layout on disk:
-            uint32_t magic;
-            uint16_t version;
-            uint8_t  addr_off_size;   // Size of addr_off_t
-            uint8_t  pad;
-            uint64_t base_address;
-            uint32_t num_addrs;
-            char strtab_section_name[]; // Name of string table section
-            // Addresses are stored as offsets from "base_address" and the
-            // addr_off_t size will vary depending on the max address - min
-            // address of all functions in this file. This allows us to store
-            // address offsets as offsets from the base_address so we don't
-            // need to store full sized addresses for each function address.
-            // Usually these are uint16_t or uint32_t values.
-            .align(addr_off_size)
-            addr_off_t addr_offsets[num_addrs];
-            // Each address in addr_offsets has a corresponding entry in
-            // addr_info_offsets which points to the location of the
-            // information for that address like the function name and size,
-            // and the address to file and line mappings.
-            .align(sizeof(uint32_t))
-            uint32_t addr_info_offsets[num_addrs];
-      FILES TABLE
-        Definitions:
-            typedef struct {
-                uint32_t directory; // String table offset in the string table
-                uint32_t basename;  // String table offset in the string table
-            } file_t;
-        Data layout on disk:
-            .align(sizeof(uint32_t))
-            uint32_t num_files;
-            file_t files[num_files];
-      ADDRESS INFOS
-        Each offset in the addr_info_offsets[] array points to one of these.
-        The data is designed to carry one or more types of information for
-        the address ranges in question. This type of the information block
-        is specified by the InfoType enumeration below. Each Information block
-        is preceded by the 32 bit InfoType enumeration and followed by a 32
-        bit size in bytes of the data for that type. This allows parsers to
-        quickly look for the data they care about and skip any data they don't
-        want to parse.
-
-        Definitions:
-            enum class uint32_t {
-                EndOfList = 0,
-                LineTable = 1,
-                UnwindInfo = 2
-            } InfoType;
-            typedef struct {
-                InfoType type;
-                uint32_t length;
-                uint8_t data[length];
-            } InfoEntry;
-        Data layout on disk:
-            .align(sizeof(uint32_t))
-            uint32_t size;    // Size in bytes of this function or symbol
-            uint32_t name;    // String table offset in the string table
-            InfoEntry info[]; // Variable size chunks if formatted data
-                              // associated with this address. Terminated by
-                              // a InfoEntry struct with a type of
-                              // InfoType::EndOfList and a length of zero.
-                              // Each InfoEntry struct is aligned on a 32 bit
-                              // boundary.
-    - string table: The symbolication information requires a string table.
-      The string table section name is specified in the header. This allows
-      the string table to share strings from an existing string table (like
-      ".strtab" or ".debug_str") or it can have its own stand alone string
-      table.
-
-    ADDRESS LOOKUPS:
-
-    Address lookups involve taking the address passed in, subtracting the
-    base_address from the header, then looking up the address offset using a
-    binary search in addr_offsets to find the index of the matching address.
-    Using this index, grab the offset for the address information from the
-    addr_info_offsets[index], and then parse the address info for the address.
-    The address info contains the byte size, so we must ensure that the address
-    info contians the address before reporting the result. The address info
-    contains the function name, function size and the line tables entries for
-    all addresses in the function if there was debug info for the function. If
-    the function came from the symbol table, there might not be file and line
-    information available.
-
-    The address queries are very efficient as the address search is searching
-    an array of offsets and we will touch a minimal number of cache lines and
-    pages when doing address lookups. The address offset index that is found
-    is then used access the offset of the data and we go straight to the data
-    that contains the address info.
-    '''
+    '''See README.md for file format details.'''
     magic_value_native = 0x4753594d   # 'GSYM'
     magic_value_swapped = 0x4d595347  # 'MYSG'
     current_version = 1
@@ -888,24 +757,25 @@ class Symbolicator(object):
         self.addr_offset_size = data.get_uint8()
         data.get_uint8() # skip pad byte
         self.base_addr = data.get_uint64()
-        num_addrs = data.get_uint32()
-        self.strtab_section_name = data.get_c_string()
-        if num_addrs > 0:
+        self.num_addrs = data.get_uint32()
+        self.strtab_offset = data.get_uint32()
+        self.strtab_size = data.get_uint32()
+        if self.num_addrs > 0:
             data.align_to(self.addr_offset_size)
             # Get one more than the number of addresses to include the last
             # terminating address.
-            for i in range(num_addrs):
+            for i in range(self.num_addrs):
                 addr_offset = data.get_uint_size(self.addr_offset_size)
                 self.addrs.append(self.base_addr + addr_offset)
             # Read the AddrInfo offsets, one for each address except the
             # terminating address.
             data.align_to(4)
-            for i in range(num_addrs):
+            for i in range(self.num_addrs):
                 self.addr_info_offsets.append(data.get_uint32())
                 self.addr_infos.append(None)
-        if logfile:
-            logfile.write('strtab_offset = %#x\n' % (data.tell()))
-        self.strtab.decode(objfile.get_section_contents_by_name(self.strtab_section_name))
+
+        strtab_data = objfile.read_data(self.strtab_offset, self.strtab_size)
+        self.strtab.decode(strtab_data)
         if logfile:
             self.strtab.dump(f=logfile)
             logfile.write('files_offset = %#x\n' % (data.tell()))
@@ -913,7 +783,7 @@ class Symbolicator(object):
         # If we are logging dump the files and all AddrInfo structs
         if logfile:
             self.files.dump(f=logfile)
-            for i in range(num_addrs):
+            for i in range(self.num_addrs):
                 addr_info = self.get_addr_info(i)
                 logfile.write('addr_info[%u] ' % (i))
                 addr_info.dump(f=logfile)
@@ -1017,13 +887,15 @@ class Symbolicator(object):
 
         # Write the number of address offsets that will follow this.
         data.put_uint32(num_addresses)
-        # We will use our own string table for now
-        file_format = objfile.get_file_type()
-        if file_format == "mach-o":
-            strtab_sect_name = "__gsym_strtab"
-        else:
-            strtab_sect_name = ".gsymstrtab"
-        data.put_c_string(strtab_sect_name)
+
+        # ---------------------------------------------------------------------
+        # Write our zero placeholders for the string table file offset. We will
+        # fixup these values after we know the string table offset.
+        # ---------------------------------------------------------------------
+        strtab_offset_offset = data.tell()
+        data.put_uint32(0)  # File offset of string table that we will fixup
+        data.put_uint32(0)  # File size of string table that we will fixup
+
         # ---------------------------------------------------------------------
         # Write the addresses as a sorted array of full sized addresses with
         # one extra termination address at the end to terminate the last
@@ -1097,9 +969,12 @@ class Symbolicator(object):
 
         data_file.close()
         strtab_file.close()
+        file_format = objfile.get_file_type()
         if file_format == "mach-o":
+            gsym_sect_name = "__gsym"
+            strtab_sect_name = "__gsym_strtab"
             command = 'echo "" | clang -Wl,-r -x c -o "%s"' % (options.outfile)
-            command += ' -Wl,-sectcreate,__GSYM,__gsym,%s' % (data_path)
+            command += ' -Wl,-sectcreate,__GSYM,%s,%s' % (gsym_sect_name, data_path)
             command += ' -Wl,-sectcreate,__GSYM,%s,%s' % (strtab_sect_name, strtab_path)
             command += ' -'
             (status, output) = commands.getstatusoutput(command)
@@ -1109,13 +984,54 @@ class Symbolicator(object):
                     print output
                 print 'error: %u' % (status)
             else:
-                print 'mach-o file created: "%s"' % (options.outfile)
+                # We must modify the mach-o file to update the string table
+                # file offset and byte size in the gsym header with the offset
+                # and size for where the string table ended up
+                mach = mach_o.Mach()
+                mach.parse(options.outfile)
+                if mach.is_valid():
+                    arch = mach.get_architecture(0)
+                    skinny = mach.get_architecture_slice(str(arch))
+                    gsym_section = skinny.get_section_by_name(gsym_sect_name)
+                    strtab_section = skinny.get_section_by_name(strtab_sect_name)
+                    mach_file = open(options.outfile, 'r+b')
+                    mach_data = file_extract.FileEncode(mach_file,
+                                                        'native',
+                                                        addr_size)
+                    fixup_offset = gsym_section.offset + strtab_offset_offset
+                    mach_data.seek(fixup_offset)
+                    mach_data.put_uint32(strtab_section.offset)
+                    mach_data.put_uint32(strtab_section.size)
+                    mach_file.close()
+                    print 'mach-o file created: "%s"' % (options.outfile)
+                else:
+                    print 'error: unable to parse created mach-o file "%s"' % (options.outfile)
         else:
+            gsym_sect_name = ".gsym"
+            strtab_sect_name = ".gsym_strtab"
             data_bytes = open(data_path, 'r').read()
             strtab_bytes = open(strtab_path, 'r').read()
-            sect_bytes_dict = { '.gsym' : data_bytes, strtab_sect_name :  strtab_bytes }
-            elf.File.create_simple_elf(objfile, options.outfile, sect_bytes_dict)
-            print 'ELF file created: "%s"' % (options.outfile)
+            sect_info_array =  [{'name':gsym_sect_name, 'bytes':data_bytes, 'align': 16},
+                {'name':strtab_sect_name, 'bytes':strtab_bytes,
+                 'sh_type':elf.SHT_STRTAB }]
+            elf.File.create_simple_elf(objfile, options.outfile, sect_info_array)
+            # We must modify the ELF file to update the string table
+            # file offset and byte size in the gsym header with the offset
+            # and size for where the string table ended up
+            elf_file = elf.File(options.outfile)
+            if elf_file.is_valid():
+                gsym_section = elf_file.get_sections_by_name(gsym_sect_name)[0]
+                strtab_section = elf_file.get_sections_by_name(strtab_sect_name)[0]
+                elf_f = open(options.outfile, 'r+b')
+                elf_data = file_extract.FileEncode(elf_f, 'native', addr_size)
+                fixup_offset = gsym_section.sh_offset + strtab_offset_offset
+                elf_data.seek(fixup_offset)
+                elf_data.put_uint32(strtab_section.sh_offset)
+                elf_data.put_uint32(strtab_section.sh_size)
+                elf_f.close()
+                print 'ELF file created: "%s"' % (options.outfile)
+            else:
+                print 'error: unable to parse created ELF file "%s"' % (options.outfile)
         os.remove(data_path)
         os.remove(strtab_path)
 
@@ -1127,7 +1043,8 @@ class Symbolicator(object):
         f.write('  pad              = 0x%2.2x\n' % (0))
         f.write('  base_address     = %#16.16x\n' % (self.base_addr))
         f.write('  num_addresses    = %#8.8x\n' % (len(self.addrs)))
-        f.write('  strtab_sect_name = "%s"\n' % (self.strtab_section_name))
+        f.write('  strtab_offset    = %#8.8x\n' % (self.strtab_offset))
+        f.write('  strtab_size      = %#8.8x\n' % (self.strtab_size))
         if self.addr_offset_size == 2:
             addr_offset_format = '0x%4.4x'
         else:

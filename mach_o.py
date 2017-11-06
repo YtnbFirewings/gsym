@@ -376,7 +376,10 @@ class Mach:
             self.sub=s
         def is_64_bit(self):
             return (self.cpu & CPU_ARCH_ABI64) != 0
-
+        def get_addr_size(self):
+            if self.is_64_bit():
+                return 8
+            return 4
         cpu_infos = [
             [ "arm"         , CPU_TYPE_ARM       , CPU_TYPE_ANY ],
             [ "arm"         , CPU_TYPE_ARM       , 0            ],
@@ -1060,6 +1063,17 @@ class Mach:
                     return section
             return None
 
+        def read_data(self, offset, size):
+            '''Read raw data from the file at offset and size and return a
+               file_extract.FileExtract that has the byte order and address
+               size set correctly.'''
+            self.data.push_offset_and_seek(offset)
+            bytes = self.data.read_size(size)
+            self.data.pop_offset_and_seek()
+            return file_extract.FileExtract(StringIO.StringIO(bytes),
+                                            self.data.get_byte_order(),
+                                            self.data.get_addr_size())
+
         def get_section_contents_by_name(self, name):
             section = self.get_section_by_name(name)
             if section:
@@ -1400,8 +1414,9 @@ class Mach:
 
         def get_contents_as_extractor(self, mach_file):
             bytes = self.get_contents(mach_file)
-            return file_extract.FileExtract(StringIO.StringIO(bytes), '=')
-
+            return file_extract.FileExtract(StringIO.StringIO(bytes),
+                                            mach_file.data.get_byte_order(),
+                                            mach_file.data.get_addr_size())
 
     class DylibLoadCommand(LoadCommand):
         def __init__(self, lc):

@@ -1742,18 +1742,18 @@ class File(object):
         return self.header is not None
 
     @classmethod
-    def create_simple_elf(cls, orig_elf, out_path, sect_bytes_dict):
+    def create_simple_elf(cls, orig_elf, out_path, sect_info_array):
         '''Create a simple ELF file with sections that contains the data found
-        in the sect_bytes_dict. It uses "orig_elf" as the template ELF file for
-        creating the new output ELF file.'''
+        in the sect_info_array. It uses "orig_elf" as the template ELF file
+        (for the machine type and byte order and more) when creating the output
+        ELF file.'''
         out_file = open(out_path, 'w')
         data = file_extract.FileEncode(out_file,
                                        orig_elf.data.get_byte_order(),
                                        orig_elf.data.get_addr_size())
-        sorted_section_names = sorted(sect_bytes_dict.keys())
         # We need one section for each section data + the section header
         # string table + the first SHT_NULL section
-        num_section_headers = len(sorted_section_names) + 2
+        num_section_headers = len(sect_info_array) + 2
         # Section headers will start immediately after this header so the
         # section headers offset is the size in bytes of the ELF header.
         eh = orig_elf.header
@@ -1778,15 +1778,16 @@ class File(object):
         # Create the section header string table contents
         shstrtab = file_extract.StringTable()
         shstrtab.insert(".shstrtab")
-        for sect_name in sorted_section_names:
-            shstrtab.insert(sect_name)
+        for sect_info in sect_info_array:
+            shstrtab.insert(sect_info['name'])
 
         # Encode the shstrtab data so we know how big it is
         shstrtab_data = file_extract.FileEncode(StringIO.StringIO())
         shstrtab.encode(shstrtab_data)
         shstrtab_bytes = shstrtab_data.file.getvalue()
+        #----------------------------------------------------------------------
         # Write out section headers
-    # def encode(cls, data, shstrtab, name = '', type = SHT_NULL, flags = 0, addr = 0, offset = 0, size = 0, link = 0, info = 0, addr_align = 0, entsize = 0):
+        #----------------------------------------------------------------------
         data_offset = num_section_headers * eh.e_shentsize + section_headers_offset
         shstrtab_size = len(shstrtab_bytes)
         SectionHeader.encode(data=data, shstrtab=shstrtab, type=SHT_NULL)
@@ -1798,21 +1799,33 @@ class File(object):
                              size=shstrtab_size,
                              addr_align=1)
         data_offset += shstrtab_size
-        for sect_name in sorted_section_names:
-            sect_bytes = sect_bytes_dict[sect_name]
+        for sect_info in sect_info_array:
+            sect_name = sect_info['name']
+            sect_bytes = sect_info['bytes']
+            sect_type = SHT_PROGBITS
+            if 'sh_type' in sect_info:
+                sect_type = sect_info['sh_type']
+            if 'align' in sect_info:
+                align = sect_info['align']
+                print 'data_offset before align %u: 0x%8.8x' % (align, data_offset)
+                data_offset = file_extract.align_to(data_offset, align)
+                print 'data_offset after  align %u: 0x%8.8x' % (align, data_offset)
             sect_bytes_len = len(sect_bytes)
             SectionHeader.encode(data=data,
                                  shstrtab=shstrtab,
                                  name=sect_name,
-                                 type=SHT_PROGBITS,
+                                 type=sect_type,
                                  offset=data_offset,
                                  size=sect_bytes_len,
                                  addr_align=1)
             data_offset += sect_bytes_len
         # Write out section header string table data
         data.file.write(shstrtab_bytes)
-        for sect_name in sorted_section_names:
-            sect_bytes = sect_bytes_dict[sect_name]
+        for sect_info in sect_info_array:
+            sect_bytes = sect_info['bytes']
+            if 'align' in sect_info:
+                align = sect_info['align']
+                data.align_to(align)
             data.file.write(sect_bytes)
 
         #for sect_name
@@ -1889,6 +1902,17 @@ class File(object):
             return sections[0].get_contents_as_extractor()
         else:
             return None
+
+    def read_data(self, offset, size):
+        '''Read raw data from the file at offset and size and return a
+           file_extract.FileExtract that has the byte order and address
+           size set correctly.'''
+        self.data.push_offset_and_seek(offset)
+        bytes = self.data.read_size(size)
+        self.data.pop_offset_and_seek()
+        return file_extract.FileExtract(StringIO.StringIO(bytes),
+                                        self.data.get_byte_order(),
+                                        self.data.get_addr_size())
 
     def get_section_headers(self):
         if self.section_headers is None:
