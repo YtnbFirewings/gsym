@@ -29,10 +29,12 @@ namespace gsym {
       m_pos = (m_pos + align - 1) / align * align;
     }
 
-    DataDecoder GetData(uint64_t len) const {
+    DataDecoder GetData(uint64_t len) {
       auto bytes = m_data.GetData(m_pos, len);
-      if (bytes)
+      if (bytes) {
+        m_pos += len;
         return DataDecoder(DataRef(bytes, len), 0);
+      }
       return DataDecoder();
     }
     
@@ -44,37 +46,37 @@ namespace gsym {
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetU16(uint16_t fail_value = 0) {
+    uint16_t GetU16(uint16_t fail_value = 0) {
       auto result = m_data.GetValue<uint16_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetU32(uint32_t fail_value = 0) {
+    uint32_t GetU32(uint32_t fail_value = 0) {
       auto result = m_data.GetValue<uint32_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetU64(uint64_t fail_value = 0) {
+    uint64_t GetU64(uint64_t fail_value = 0) {
       auto result = m_data.GetValue<uint64_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetS8(int8_t fail_value = 0) {
+    int8_t GetS8(int8_t fail_value = 0) {
       auto result = m_data.GetValue<int8_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetS16(int16_t fail_value = 0) {
+    int16_t GetS16(int16_t fail_value = 0) {
       auto result = m_data.GetValue<int16_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetS32(int32_t fail_value = 0) {
+    int32_t GetS32(int32_t fail_value = 0) {
       auto result = m_data.GetValue<int32_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
     }
-    uint8_t GetS64(int64_t fail_value = 0) {
+    int64_t GetS64(int64_t fail_value = 0) {
       auto result = m_data.GetValue<int64_t>(m_pos, fail_value);
       m_pos += sizeof(fail_value);
       return result;
