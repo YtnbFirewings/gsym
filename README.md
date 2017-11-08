@@ -49,6 +49,8 @@ all line tables.
 
 The current code is in Python and can parse DWARF information found in mach-o
 and ELF file generates a ELF or mach-o files that contain the new gsym format.
+The gsym file format can be a part of an existing mach-o or ELF object file, or
+it can be a stand alone file format.
 
 The gsym.py file contains a class named gsym.Symbolicator that is a
 class for a new symbolication format that uses sections within object
@@ -72,7 +74,7 @@ To save space many things have been done:
 - use a string table for all strings that contains uniqued strings. The
   string table can be shared with the current executable or debug info which
   allows this information to be efficiently encoded in existing debug info
-  files.
+  files or as a stand alone file.
 - store file paths by separating the directory and basename. These are
   stored as offsets into the string table. This allows file directories
   to share the same string in the string table. Unlike DWARF, all files are
@@ -88,19 +90,24 @@ used as is. Each lookup will only expand any information for a given address
 on demand. This means the address lookup information is all grouped together
 and touches as few pages as possible when doing the lookups.
 
-The data is placed two sections in the object file. The main section contains
-the header, address table, address info offsets, files and the actual address
-info data. This section is named "__gsym" in mach-o and ".gsym" in all other
-file formats. The symbolication information requires a string table. The string
-table is specified in the GSYM header with a string table file offset and string
-table byte size. This allows the string table to share strings with existing
-string tables (like ".strtab" or ".debug_str") or it can have its own stand
-alone string table.
+If the gsym data is in a stand alone file, the file starts with the gsym header.
+If the gsym data is part of an object file, the data is placed into sections
+in the object file. The main section contains the gsym header, address table,
+address info offsets, files and the actual address info data. This section is
+named "__gsym" in mach-o and ".gsym" in all other file formats.
+
+The string table is specified in the GSYM header using a file offset and byte
+size. This allows the string table to share strings with existing string tables
+(like ".strtab" or ".debug_str") or it can have its own stand alone string
+table. It also allows a file offset and size that encompasses multiple string
+tables in object files.
+
 
 ### The format of the main section section is:
 #### HEADER
 Data layout on disk:
 ```
+    .align(16)
     uint32_t magic;
     uint16_t version;
     uint8_t  addr_off_size;  // Size of addr_off_t
