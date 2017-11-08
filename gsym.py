@@ -478,7 +478,7 @@ class AddrInfo(object):
                                  addr_delta))
 
             # Make a 1 based file index into the files array
-            file_num = fullpath_to_index[line_entry.fullpath]+1
+            file_num = fullpath_to_index[line_entry.fullpath]
 
             # Set the file if it doesn't match the current one.
             if file_num != curr_file_num:
@@ -676,11 +676,8 @@ class AddrInfo(object):
                         if debug:
                             print('%#8.8x: DBG_SPECIAL(%#2.2x) line += %i, addr += %i'
                                   % (offset, op, line_delta, addr_delta))
-                        file_idx = file_num - 1
-                        if file_idx < 0 or file_idx >= len(files.files):
-                            raise ValueError('invalid file index %i' % (file_idx))
                         self.lines.append(LineEntry(addr,
-                                                    files[file_idx].get_fullpath(),
+                                                    files[file_num].get_fullpath(),
                                                     line))
                     elif op == DBG_SET_FILE:
                         # Set the current source file with a 1 based file
@@ -693,11 +690,8 @@ class AddrInfo(object):
                         if debug:
                             print('%#8.8x: DBG_ADVANCE_PC(%u)' % (offset, addr_delta))
                         addr += addr_delta
-                        file_idx = file_num - 1
-                        if file_idx < 0 or file_idx >= len(files.files):
-                            raise ValueError('invalid file index %i' % (file_idx))
                         self.lines.append(LineEntry(addr,
-                                                    files[file_num-1].get_fullpath(),
+                                                    files[file_num].get_fullpath(),
                                                     line))
                     elif op == DBG_ADVANCE_LINE:
                         line_delta = data.get_sleb128()
