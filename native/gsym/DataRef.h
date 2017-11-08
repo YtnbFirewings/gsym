@@ -91,7 +91,7 @@ namespace gsym {
       if (p) {
         // Use memcpy to avoid alignment requirements
         T value;
-        memcpy(&value, p, sizeof(uint64_t));
+        memcpy(&value, p, sizeof(T));
         return value;
       }
       return fail_value;
