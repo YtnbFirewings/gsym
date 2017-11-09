@@ -19,6 +19,7 @@
 		2634C2D41FB36F03004779A7 /* DataDecoder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2634C2B41FB110E9004779A7 /* DataDecoder.cpp */; };
 		2634C2D51FB36F14004779A7 /* gsym_macho.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 265B159C1FAD17130082A2CD /* gsym_macho.cpp */; };
 		2634C2D61FB36F1A004779A7 /* gsym_elf.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2634C2B01FB0EAC0004779A7 /* gsym_elf.cpp */; };
+		26422CAA1FB38D6E00613A0A /* MemoryMappedFile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2634C2C31FB28F89004779A7 /* MemoryMappedFile.cpp */; };
 		265B159E1FAD17130082A2CD /* gsym_macho.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 265B159C1FAD17130082A2CD /* gsym_macho.cpp */; };
 		26B613D01F8E908D0030E343 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26B613CF1F8E908D0030E343 /* main.cpp */; };
 		26B613D81F8E91000030E343 /* gsym.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26B613D61F8E91000030E343 /* gsym.cpp */; };
@@ -245,6 +246,7 @@
 				26B613D01F8E908D0030E343 /* main.cpp in Sources */,
 				2634C2D11FB2D645004779A7 /* FileTableCreator.cpp in Sources */,
 				26B613D81F8E91000030E343 /* gsym.cpp in Sources */,
+				26422CAA1FB38D6E00613A0A /* MemoryMappedFile.cpp in Sources */,
 				2634C2CE1FB2D4C0004779A7 /* FileWriter.cpp in Sources */,
 				2634C2B21FB0EAC0004779A7 /* gsym_elf.cpp in Sources */,
 			);
@@ -380,6 +382,7 @@
 				2634C2C11FB28D9C004779A7 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		26B613C71F8E908D0030E343 /* Build configuration list for PBXProject "gsym" */ = {
 			isa = XCConfigurationList;

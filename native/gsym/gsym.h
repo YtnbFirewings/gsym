@@ -16,6 +16,7 @@
 #include "DataRef.h"
 #include "FileEntry.h"
 #include "FunctionInfo.h"
+#include "MemoryMappedFile.h"
 #include "StringTable.h"
 
 namespace gsym {
@@ -91,7 +92,7 @@ namespace gsym {
         }
       }
     };
-    DataRef m_file_data;
+    MemoryMappedFile m_file;
     DataRef m_gsym_data;
     Header *m_header;
     const void *m_addr_offsets;

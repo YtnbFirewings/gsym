@@ -97,25 +97,32 @@ namespace {
       int64_t max_delta = m_data.GetSLEB128();
       int64_t line_range = max_delta - min_delta + 1;
       uint32_t first_line = (uint32_t)m_data.GetULEB128();
+      if (dump) {
+        printf("base_addr = 0x%8.8llx\n", base_addr);
+        printf("min_delta = %lli\n", min_delta);
+        printf("max_delta = %lli\n", max_delta);
+        printf("first_line = %u\n", first_line);
+      }
       LineEntry row(base_addr, 1, first_line);
       bool done = false;
       while (!done) {
+        auto opcode_offset = m_data.GetPosition();
         uint8_t opcode = m_data.GetU8();
         switch (opcode) {
           case DBG_END_SEQUENCE:
             if (dump)
-              printf ("DBG_END_SEQUENCE\n");
+              printf ("0x%8.8lx: DBG_END_SEQUENCE\n", opcode_offset);
             done = true;
             break;
           case DBG_SET_FILE:
             row.file = (uint32_t)m_data.GetULEB128();
             if (dump)
-              printf ("DBG_SET_FILE(%u)\n", row.file);
+              printf ("0x%8.8lx: DBG_SET_FILE(%u)\n", opcode_offset, row.file);
             break;
           case DBG_ADVANCE_PC: {
             auto delta = m_data.GetULEB128();
             if (dump)
-              printf ("DBG_ADVANCE_PC(%llu)\n", delta);
+              printf ("0x%8.8lx: DBG_ADVANCE_PC(%llu)\n", opcode_offset, delta);
             row.addr += delta;
             // If the function callback returns false, we stop parsing
             if (row_callback(row) == false)
@@ -128,7 +135,7 @@ namespace {
           case DBG_ADVANCE_LINE: {
             auto delta = m_data.GetSLEB128();
             if (dump)
-              printf ("DBG_ADVANCE_LINE(%lli)\n", delta);
+              printf ("0x%8.8lx: DBG_ADVANCE_LINE(%lli)\n", opcode_offset, delta);
             row.line += delta;
           }
             break;
@@ -138,8 +145,8 @@ namespace {
             int64_t line_delta = min_delta + (adjusted_opcode % line_range);
             uint64_t addr_delta = (adjusted_opcode / line_range);
             if (dump)
-              printf("DBG_SPECIAL(0x%2.2x) addr_delta=%llu, line_delta=%lli\n",
-                     opcode, addr_delta, line_delta);
+              printf("0x%8.8lx: DBG_SPECIAL(0x%2.2x) line += %lli, addr += %llu\n",
+                     opcode_offset, opcode, line_delta, addr_delta);
             row.line += line_delta;
             row.addr += addr_delta;
             // If the function callback returns false, we stop parsing
@@ -157,6 +164,14 @@ namespace {
   public:
     LineTable(DataDecoder data) : m_data(data) {}
 
+    static const char *GetInfoTypeAsString(uint32_t info_type) {
+      switch (info_type) {
+        case InfoType::EndOfList: return "EndOfList";
+        case InfoType::LineTableInfo: return "LineTable";
+        case InfoType::InlineInfo: return "InlineInfo";
+        default: return "???";
+      }
+    }
     static bool Write(FileWriter &out, const FunctionInfo &func_info, bool dump) {
       
       if (func_info.lines.empty())
@@ -167,26 +182,26 @@ namespace {
       const off_t line_table_length_offset = out.Tell();
       out.WriteU32(0);
       const off_t line_table_start = line_table_length_offset + 4;
-      int64_t min_line_delta = INT64_MAX;
-      int64_t max_line_delta = INT64_MIN;
-      int64_t prev_line = 1;
-      bool first = true;
-      for (const auto &line_entry: func_info.lines) {
-        if (first)
-          first = false;
-        else {
-          int64_t line_delta = (int64_t)line_entry.line - prev_line;
-          if (min_line_delta < line_delta)
-            min_line_delta = line_delta;
-          if (max_line_delta > line_delta)
-            max_line_delta = line_delta;
-        }
-        prev_line = line_entry.line;
-      }
-      if (min_line_delta < -4)
-        min_line_delta = -4;
-      if (max_line_delta > 10)
-        max_line_delta = 10;
+      int64_t min_line_delta = -4;
+      int64_t max_line_delta = 10;
+//      int64_t prev_line = 1;
+//      bool first = true;
+//      for (const auto &line_entry: func_info.lines) {
+//        if (first)
+//          first = false;
+//        else {
+//          int64_t line_delta = (int64_t)line_entry.line - prev_line;
+//          if (min_line_delta < line_delta)
+//            min_line_delta = line_delta;
+//          if (max_line_delta > line_delta)
+//            max_line_delta = line_delta;
+//        }
+//        prev_line = line_entry.line;
+//      }
+//      if (min_line_delta < -4)
+//        min_line_delta = -4;
+//      if (max_line_delta > 10)
+//        max_line_delta = 10;
       
       // Initialize the line entry state as a starting point. All line entries
       // will be deltas from this.
@@ -292,63 +307,35 @@ std::string File::Header::GetError() const {
 }
 
 File::File(const char *path) :
-  m_file_data(),
+  m_file(),
   m_header(nullptr),
   m_addr_offsets(nullptr),
   m_addr_info_offsets(nullptr),
   m_files(nullptr) {
   // Open the input file
-  int fd = open (path, O_RDONLY);
-  if (fd == -1) {
-    m_error.append("open: ");
-    m_error.append(strerror(errno));
+  if (!m_file.Open(path, m_error))
     return;
-  }
-  
-  // We are going mmap this file and we need the file size in bytes for that.
-  struct stat stat_info;
-  if (fstat (fd, &stat_info) == -1) {
-    m_error.append("fstat: ");
-    m_error.append(strerror(errno));
-    return;
-  }
-
-  // Make sure we have a file.
-  if (!S_ISREG (stat_info.st_mode)) {
-    m_error.append(path);
-    m_error.append(": not a file");
-    return;
-  }
-    
-  // memory map the file shared and read only.
-  const uint8_t *data = (uint8_t *)mmap (0, stat_info.st_size, PROT_READ,
-                                         MAP_SHARED, fd, 0);
-  if (data == MAP_FAILED) {
-    m_error.append("mmap: ");
-    m_error.append(strerror(errno));
-    return;
-  }
   // We need to keep track of the mmap pointer and size so we can unmap this
   // the mmap data later. We keep this in m_file_data.
-  m_file_data = DataRef(data, stat_info.st_size);
+  DataRef file_data = m_file.GetData();
   // Now we must see if this is a stand alone gsym file, or of the data is
   // contained in a mach-o or ELF file.
-  auto magic = m_file_data.GetValue<uint32_t>(0, 0);
+  auto magic = file_data.GetValue<uint32_t>(0, 0);
   if (magic == GSYM_MAGIC) {
     // Stand alone GSYM file.
-    m_gsym_data = m_file_data;
+    m_gsym_data = file_data;
   } else {
     // See if we have gsym data is in a mach-o file.
-    m_gsym_data = macho::GetGSYMSectionData(magic, m_file_data);
+    m_gsym_data = macho::GetGSYMSectionData(magic, file_data);
   }
     
   if (!m_gsym_data.IsValid())
     return;
   m_header = (Header *)m_gsym_data.GetPointer<Header>(0);
-  close (fd);
+
   m_error = m_header->GetError();
   if (!m_error.empty()) {
-    Unmap();
+    m_file.Clear();
     return;
   }
   const uint8_t *p = (uint8_t *)m_gsym_data.data;
@@ -357,8 +344,7 @@ File::File(const char *path) :
   p = alignTo(p + m_header->num_addrs * m_header->addr_off_size, sizeof(uint32_t));
   m_addr_info_offsets = (uint32_t *)p;
   p = alignTo(p + m_header->num_addrs * sizeof(uint32_t), sizeof(uint32_t));
-  m_strtab.data = m_file_data.GetSlice(m_header->strtab_offset,
-                                       m_header->strtab_size);
+  m_strtab.data = file_data.GetSlice(m_header->strtab_offset, m_header->strtab_size);
   p = alignTo(p, sizeof(uint32_t));
   m_files = (FileTable *)p;
 }
@@ -419,11 +405,11 @@ void File::Dump() {
   for (uint32_t i=0; i<m_header->num_addrs; ++i)
     printf("[%3u] 0x%8.8llx\n", i, GetAddressInfoOffset(i));
   m_files->Dump(m_strtab);
-  m_strtab.Dump();
+  //m_strtab.Dump();
   
   for (uint32_t i=0; i<m_header->num_addrs; ++i) {
     const auto addr_info_offset = GetAddressInfoOffset(i);
-    printf("0x%8.8llx: ", addr_info_offset);
+    printf("\n0x%8.8llx: ", addr_info_offset);
     auto addr_info = m_gsym_data.GetPointer<AddressInfo>(addr_info_offset);
     if (addr_info) {
       uint64_t addr = m_header->base_address + GetAddressOffset(i);
@@ -431,19 +417,32 @@ void File::Dump() {
       auto name = m_strtab.GetString(addr_info->name);
       printf("[0x%llx - 0x%llx): %s\n", addr, end_addr, name);
       DataDecoder data = GetAddressInfoPayload(i);
-      uint32_t info_type;
-      while ((info_type = data.GetU32())) {
+      
+      bool done = false;
+      while (!done) {
+        off_t offset = data.GetPosition() + addr_info_offset + 8;
+        uint32_t info_type = data.GetU32();
         uint32_t info_len = data.GetU32();
+        printf("0x%8.8llx: %s length=0x%x (%u)\n", offset, LineTable::GetInfoTypeAsString(info_type), info_len, info_len);
         DataDecoder info_data = data.GetData(info_len);
         switch (info_type) {
-          case InfoType::LineTableInfo: {
-            std::vector<LineEntry> line_table;
-            LineTable line_parser(info_data);
-            DumpLineTable(addr, info_data, true);
-          }
-          break;
-        case InfoType::InlineInfo:
-          break;
+          case InfoType::EndOfList:
+            done = true;
+            break;
+
+          case InfoType::LineTableInfo:
+            {
+              std::vector<LineEntry> line_table;
+              LineTable line_parser(info_data);
+              DumpLineTable(addr, info_data, false);
+            }
+            break;
+
+          case InfoType::InlineInfo:
+            {
+              printf("error: dumping InlineInfo isn't supported yet\n");
+            }
+            break;
         }
       }
     }
@@ -640,15 +639,13 @@ bool File::Save(StringTableCreator &strtab,
 
 
 void File::Unmap() {
-  if (m_file_data.IsValid()) {
-    munmap ((void *)m_file_data.data, m_file_data.length);
-    m_file_data.Clear();
-    m_header = nullptr;
-    m_addr_offsets = nullptr;
-    m_addr_info_offsets = nullptr;
-    m_strtab.Clear();
-    m_files = nullptr;
-  }
+  m_file.Clear();
+  m_gsym_data.Clear();
+  m_header = nullptr;
+  m_addr_offsets = nullptr;
+  m_addr_info_offsets = nullptr;
+  m_files = nullptr;
+  m_strtab.Clear();
 }
 
 File::~File() {
