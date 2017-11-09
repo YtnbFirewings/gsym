@@ -210,7 +210,11 @@ namespace {
       for (const auto &curr: func_info.lines) {
         assert(curr.addr >= prev.addr);
         uint64_t addr_delta = curr.addr - prev.addr;
-        int64_t line_delta = curr.line - prev.line;
+        int64_t line_delta = 0;
+        if (curr.line > prev.line)
+          line_delta = curr.line - prev.line;
+        else if (prev.line > curr.line)
+          line_delta = -((int32_t)(prev.line - curr.line));
         
         // Set the file if it doesn't match the current one.
         if (curr.file != prev.file) {

@@ -66,6 +66,7 @@
 		2634C2CC1FB2D4C0004779A7 /* FileWriter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FileWriter.cpp; sourceTree = "<group>"; };
 		2634C2CD1FB2D4C0004779A7 /* FileWriter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = FileWriter.h; sourceTree = "<group>"; };
 		2634C2D01FB2D645004779A7 /* FileTableCreator.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FileTableCreator.cpp; sourceTree = "<group>"; };
+		264DACD61FB4D60D00D590B3 /* LEB128.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LEB128.h; sourceTree = "<group>"; };
 		265B159C1FAD17130082A2CD /* gsym_macho.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gsym_macho.cpp; sourceTree = "<group>"; };
 		265B159D1FAD17130082A2CD /* gsym_macho.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gsym_macho.h; sourceTree = "<group>"; };
 		26B613CC1F8E908D0030E343 /* gsym */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = gsym; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -130,6 +131,7 @@
 				2634C2CC1FB2D4C0004779A7 /* FileWriter.cpp */,
 				2634C2CD1FB2D4C0004779A7 /* FileWriter.h */,
 				2634C2C81FB2C169004779A7 /* FunctionInfo.h */,
+				264DACD61FB4D60D00D590B3 /* LEB128.h */,
 				2634C2C91FB2C217004779A7 /* LineEntry.h */,
 				2634C2CA1FB2C320004779A7 /* LookupResult.h */,
 				2634C2C31FB28F89004779A7 /* MemoryMappedFile.cpp */,

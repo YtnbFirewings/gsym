@@ -4,6 +4,7 @@
 //
 
 #include "FileWriter.h"
+#include "LEB128.h"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -33,34 +34,16 @@ void FileWriter::Close() {
 
 bool FileWriter::WriteSLEB(int64_t value) {
   uint8_t bytes[32];
-  uint32_t i = 0;
-  uint64_t uvalue;
-  if (value < 0)
-    uvalue = (1 - value) * 2;
-  else
-    uvalue = value * 2;
-  while (true) {
-    uint8_t byte = value & 0x7F;
-    value >>= 7;
-    uvalue >>= 7;
-    if (uvalue != 0) {
-      bytes[i++] = byte | 0x80ull;
-    }
-    if (uvalue == 0)
-      break;
-  }
-  return Write(bytes, i);
+  auto len = encodeSLEB128(value, bytes);
+  assert(len < sizeof(bytes));
+  return Write(bytes, len);
 }
 
 bool FileWriter::WriteULEB(uint64_t value) {
   uint8_t bytes[32];
-  uint32_t i = 0;
-  while (value >= 0x80) {
-    bytes[i++] = 0x80ull | (value & 0x7full);
-    value >>= 7;
-  }
-  bytes[i++] = value;
-  return Write(bytes, i);
+  auto len = encodeULEB128(value, bytes);
+  assert(len < sizeof(bytes));
+  return Write(bytes, len);
 }
 
 bool FileWriter::WriteU8(uint8_t u) {
