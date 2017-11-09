@@ -37,13 +37,6 @@ namespace {
     InlineInfo = 2u
   };
 
-  struct AddressInfo
-  {
-    uint32_t size;
-    uint32_t name;
-    uint8_t opcodes[];
-  };
-  
   inline const uint8_t *alignTo(const uint8_t *value, uintptr_t align)
   {
     if (value == nullptr)
@@ -464,99 +457,137 @@ void File::DumpLineTable(uint64_t base_addr, DataDecoder &line_data,
   }
 }
 
-bool File::Lookup(uint64_t addr, LookupResult &result) {
-  
-  //result.Clear();
+bool File::FindAddressInfo(uint64_t addr, LookupInfo &lookup_info) {
   if (addr < m_header->base_address || m_header->num_addrs == 0)
-    return false;
-  uint64_t offset = addr - m_header->base_address;
-  size_t addr_info_index = SIZE_MAX;
-  uint64_t match_offset = UINT64_MAX;
+    return nullptr;
+  const uint64_t addr_offset = addr - m_header->base_address;
+  lookup_info.Clear();
+  
   switch (m_header->addr_off_size) {
     case 1: {
       auto first = reinterpret_cast<const uint8_t *>(m_addr_offsets);
       auto last = first + m_header->num_addrs;
-      auto pos = std::lower_bound(first, last, offset);
-      if (pos == last || offset < *pos)
+      auto pos = std::lower_bound(first, last, addr_offset);
+      if (pos == last || addr_offset < *pos)
         --pos;
-      addr_info_index = std::distance(first, pos);
-      match_offset = *pos;
+      lookup_info.addr_info_index = std::distance(first, pos);
+      lookup_info.match_addr_offset = *pos;
       break;
     }
     case 2: {
       auto first = reinterpret_cast<const uint16_t *>(m_addr_offsets);
       auto last = first + m_header->num_addrs;
-      auto pos = std::lower_bound(first, last, offset);
-      if (pos == last || offset < *pos)
+      auto pos = std::lower_bound(first, last, addr_offset);
+      if (pos == last || addr_offset < *pos)
         --pos;
-      addr_info_index = std::distance(first, pos);
-      match_offset = *pos;
+      lookup_info.addr_info_index = std::distance(first, pos);
+      lookup_info.match_addr_offset = *pos;
       break;
     }
     case 4: {
       auto first = reinterpret_cast<const uint32_t *>(m_addr_offsets);
       auto last = first + m_header->num_addrs;
-      auto pos = std::lower_bound(first, last, offset);
-      if (pos == last || offset < *pos)
+      auto pos = std::lower_bound(first, last, addr_offset);
+      if (pos == last || addr_offset < *pos)
         --pos;
-      addr_info_index = std::distance(first, pos);
-      match_offset = *pos;
+      lookup_info.addr_info_index = std::distance(first, pos);
+      lookup_info.match_addr_offset = *pos;
       break;
     }
     case 8: {
       auto first = reinterpret_cast<const uint64_t *>(m_addr_offsets);
       auto last = first + m_header->num_addrs;
-      auto pos = std::lower_bound(first, last, offset);
-      if (pos == last || offset < *pos)
+      auto pos = std::lower_bound(first, last, addr_offset);
+      if (pos == last || addr_offset < *pos)
         --pos;
-      addr_info_index = std::distance(first, pos);
-      match_offset = *pos;
+      lookup_info.addr_info_index = std::distance(first, pos);
+      lookup_info.match_addr_offset = *pos;
       break;
     }
     default:
       break;
   }
   
-  if (addr_info_index < m_header->num_addrs) {
-    auto addr_info_offset = m_addr_info_offsets[addr_info_index];
+  if (lookup_info.addr_info_index < m_header->num_addrs) {
+    auto addr_info_offset = m_addr_info_offsets[lookup_info.addr_info_index];
     auto addr_info = m_gsym_data.GetPointer<AddressInfo>(addr_info_offset);
     if (addr_info) {
-      auto func_offset = offset - match_offset;
-      if (func_offset < addr_info->size) {
-        result.addr = m_header->base_address + match_offset;
-        result.end_addr = result.addr + addr_info->size;
-        result.name = m_strtab.GetString(addr_info->name);
-        
-        DataDecoder data = GetAddressInfoPayload(addr_info_index);
-        uint32_t info_type;
-        while ((info_type = data.GetU32())) {
-          uint32_t info_len = data.GetU32();
-          DataDecoder info_data = data.GetData(info_len);
-          switch (info_type) {
-          case InfoType::LineTableInfo: {
-              std::vector<LineEntry> line_table;
-              LineTable line_parser(info_data);
-              //DumpLineTable(info_data); // Uncomment to dump the line table
-              LineEntry line_entry = line_parser.Lookup(result.addr, addr);
-              if (line_entry.IsValid()) {
-                auto file_entry = m_files->GetFile(line_entry.file);
-                result.directory = m_strtab.GetString(file_entry.directory);
-                result.basename = m_strtab.GetString(file_entry.basename);
-                result.line = line_entry.line;
-              }
-            }
-            break;
-          case InfoType::InlineInfo:
-            break;
-          }
-        }
+      // Make sure the address is within the bounds of the address info's size
+      auto func_offset = addr_offset - lookup_info.match_addr_offset;
+      // If an entry has zero size, then we will match it regardless of the
+      // size. These are typically symbols in the symbol table.
+      if (addr_info->size == 0 || func_offset < addr_info->size) {
+        lookup_info.addr_info = addr_info;
         return true;
       }
     }
   }
-
   return false;
 }
+
+bool File::Lookup(uint64_t addr, LookupResult &result) {
+  result.Clear();
+  LookupInfo lookup_info;
+  if (!FindAddressInfo(addr, lookup_info))
+    return false;
+  
+  result.addr = m_header->base_address + lookup_info.match_addr_offset;
+  result.end_addr = result.addr + lookup_info.addr_info->size;
+  result.name = m_strtab.GetString(lookup_info.addr_info->name);
+  
+  DataDecoder data = GetAddressInfoPayload(lookup_info.addr_info_index);
+  uint32_t info_type;
+  while ((info_type = data.GetU32())) {
+    uint32_t info_len = data.GetU32();
+    DataDecoder info_data = data.GetData(info_len);
+    switch (info_type) {
+    case InfoType::LineTableInfo: {
+        std::vector<LineEntry> line_table;
+        LineTable line_parser(info_data);
+        //DumpLineTable(info_data); // Uncomment to dump the line table
+        LineEntry line_entry = line_parser.Lookup(result.addr, addr);
+        if (line_entry.IsValid()) {
+          auto file_entry = m_files->GetFile(line_entry.file);
+          result.directory = m_strtab.GetString(file_entry.directory);
+          result.basename = m_strtab.GetString(file_entry.basename);
+          result.line = line_entry.line;
+        }
+      }
+      break;
+    case InfoType::InlineInfo:
+      break;
+    }
+  }
+  return true;
+}
+
+bool File::GetFunctionInfo(uint64_t addr, FunctionInfo &func_info) {
+  LookupInfo lookup_info;
+  if (!FindAddressInfo(addr, lookup_info))
+    return false;
+  
+  func_info.addr = m_header->base_address + lookup_info.match_addr_offset;
+  func_info.size = lookup_info.addr_info->size;
+  func_info.name = lookup_info.addr_info->name;
+  
+  DataDecoder data = GetAddressInfoPayload(lookup_info.addr_info_index);
+  uint32_t info_type;
+  while ((info_type = data.GetU32())) {
+    uint32_t info_len = data.GetU32();
+    DataDecoder info_data = data.GetData(info_len);
+    switch (info_type) {
+      case InfoType::LineTableInfo: {
+          LineTable parser(info_data);
+          parser.ParseAllEntries(func_info.lines, func_info.addr, false);
+        }
+        break;
+      case InfoType::InlineInfo:
+        break;
+    }
+  }
+  return true;
+}
+
 
 
 bool File::Save(StringTableCreator &strtab,

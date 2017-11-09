@@ -15,6 +15,7 @@
 
 #include "DataRef.h"
 #include "FileEntry.h"
+#include "LineEntry.h"
 #include "FunctionInfo.h"
 #include "MemoryMappedFile.h"
 #include "StringTable.h"
@@ -31,7 +32,7 @@ namespace gsym {
     
     void Dump();
     bool Lookup(uint64_t addr, LookupResult &result);
-
+    bool GetFunctionInfo(uint64_t addr, FunctionInfo &func_info);
     static bool Save(StringTableCreator &strtab,
                      FileTableCreator &filetab,
                      const std::vector<FunctionInfo> &func_infos,
@@ -39,6 +40,30 @@ namespace gsym {
   protected:
 
     void Unmap();
+    struct AddressInfo
+    {
+      uint32_t size;
+      uint32_t name;
+      uint8_t opcodes[];
+    };
+    struct LookupInfo {
+      uint64_t match_addr_offset;
+      size_t addr_info_index;
+      const AddressInfo *addr_info;
+      LookupInfo() :
+        match_addr_offset(0),
+        addr_info_index(SIZE_MAX),
+        addr_info(nullptr) {
+      }
+      void Clear() {
+        match_addr_offset = 0;
+        addr_info_index = SIZE_MAX;
+        addr_info = nullptr;
+      }
+    };
+    
+    bool FindAddressInfo(uint64_t addr, LookupInfo &lookup_info);
+
     uint64_t GetAddressOffset(size_t idx);
     uint64_t GetAddressInfoOffset(size_t idx);
     DataRef GetAddressInfoPayload(size_t idx);

@@ -7,6 +7,7 @@
 //
 
 #include <assert.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -124,16 +125,43 @@ public:
     return UINT64_MAX;
   }
 };
-int main(int argc, const char * argv[]) {
-  if (argc != 3) {
-    printf(R"(Usage: bpadtogsym <BREAKPAD_FILE> <GSYM_FILE>
 
+void usage()
+{
+  printf(R"(Usage: bpadtogsym <BREAKPAD_FILE> <GSYM_FILE>
+         
 Converts Google Breakpad files to GSYM files. The Breakpad file is specified
 as a path to the Breakpad text file and the output GSYM file is specified as
 the path to the output GSYM file.)");
+}
+
+int main(int argc, char * const *argv) {
+  
+  int verify = 0;
+  /* options descriptor */
+  static struct option longopts[] = {
+    { "verify",     no_argument,            &verify,        1 },
+  };
+  
+  int ch;
+  while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+    switch (ch) {
+      case 0:
+        break;
+      default:
+        usage();
+        return 1;
+    }
   }
-  const char *bpad_path = argv[1];
-  const char *gsym_path = argv[2];
+  argc -= optind;
+  argv += optind;
+
+  if (argc != 2) {
+    usage();
+    return 1;
+  }
+  const char *bpad_path = argv[0];
+  const char *gsym_path = argv[1];
   MemoryMappedFile bpad_mmap;
   StringTableCreator strtab;
   std::vector<FunctionInfo> func_infos;
@@ -212,5 +240,17 @@ the path to the output GSYM file.)");
     std::sort(func_infos.begin(), func_infos.end());
   }
   gsym::File::Save(strtab, filetab, func_infos, gsym_path);
+  
+  if (verify) {
+    gsym::File gsym(gsym_path);
+    for (const auto &func_info: func_infos) {
+      FunctionInfo gsym_func_info;
+      if (gsym.GetFunctionInfo(func_info.addr, gsym_func_info)) {
+        if (func_info != gsym_func_info) {
+          puts("stop here");
+        }
+      }
+    }
+  }
   return 0;
 }

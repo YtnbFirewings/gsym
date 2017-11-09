@@ -35,6 +35,15 @@ namespace gsym {
     }
   };
   
+  inline bool operator==(const FunctionInfo &lhs, const FunctionInfo &rhs) {
+    return lhs.addr == rhs.addr &&
+           lhs.size == rhs.size &&
+           lhs.name == rhs.name &&
+           lhs.lines == rhs.lines;
+  }
+  inline bool operator!=(const FunctionInfo &lhs, const FunctionInfo &rhs) {
+    return !(lhs == rhs);
+  }
   inline bool operator<(const FunctionInfo &lhs, const FunctionInfo &rhs) {
     return lhs.addr < rhs.addr;
   }

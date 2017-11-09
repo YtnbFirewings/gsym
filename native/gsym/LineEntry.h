@@ -19,6 +19,14 @@ namespace gsym {
       return line != 0;
     }
   };
+  inline bool operator==(const LineEntry &lhs, const LineEntry &rhs) {
+    return lhs.addr == rhs.addr &&
+           lhs.file == rhs.file &&
+           lhs.line == rhs.line;
+  }
+  inline bool operator!=(const LineEntry &lhs, const LineEntry &rhs) {
+    return !(lhs == rhs);
+  }
 }
 
 #endif // #ifndef gsym_LineEntry_h
