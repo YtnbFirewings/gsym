@@ -463,7 +463,7 @@ void File::DumpLineTable(uint64_t base_addr, DataDecoder &line_data,
 
 bool File::FindAddressInfo(uint64_t addr, LookupInfo &lookup_info) {
   if (addr < m_header->base_address || m_header->num_addrs == 0)
-    return nullptr;
+    return false;
   const uint64_t addr_offset = addr - m_header->base_address;
   lookup_info.Clear();
   
