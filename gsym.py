@@ -614,7 +614,7 @@ class AddrInfo(object):
             # print('Best encoding result: %u bytes, min=%i, max=%i' % (
             #     len(best_encoding[0]), best_encoding[1], best_encoding[2]))
             data.file.write(best_encoding[0])
-            data_size = data.tell() - data_size_offset
+            data_size = data.tell() - data_size_offset - 4
             data.fixup_uint_size(4, data_size, data_size_offset)
 
         # Write out the inline information if any
@@ -629,8 +629,9 @@ class AddrInfo(object):
             inline_info.encode(self.range.lo, strtab, files, data)
             data_size = data.tell() - data_size_offset
             data.fixup_uint_size(4, data_size, data_size_offset)
-        # Terminate the data for this address info
+        # Terminate the data for this address info with a zero size payload
         data.put_uint32(self.EndOfList)
+        data.put_uint32(0)
 
     def decode(self, addr, data, strtab, files):
         debug = False
@@ -718,18 +719,24 @@ class Symbolicator(object):
         self.data = None
         self.strtab = None
         objfile = None
-        mach = mach_o.Mach()
-        mach.parse(path)
-        data = None
-        if mach.is_valid():
-            arch = mach.get_architecture(0)
-            objfile = mach.get_architecture_slice(str(arch))
-            if objfile:
-                data = objfile.get_section_contents_by_name("__gsym")
+        data = file_extract.FileExtract(open(path), '=', 4)
+        if data.get_uint32() == self.magic_value_native:
+            # This is a stand alone gsym file
+            data.seek(0)
         else:
-            objfile = elf.File(path)
-            if objfile.is_valid():
-                data = objfile.get_section_contents_by_name(".gsym")
+            # Try and get gsym data from withing a mach-o or ELF file
+            mach = mach_o.Mach()
+            mach.parse(path)
+            data = None
+            if mach.is_valid():
+                arch = mach.get_architecture(0)
+                objfile = mach.get_architecture_slice(str(arch))
+                if objfile:
+                    data = objfile.get_section_contents_by_name("__gsym")
+            else:
+                objfile = elf.File(path)
+                if objfile.is_valid():
+                    data = objfile.get_section_contents_by_name(".gsym")
         if data is None:
             print('error: unsupported file type "%s"', path)
             return
@@ -768,7 +775,12 @@ class Symbolicator(object):
                 self.addr_info_offsets.append(data.get_uint32())
                 self.addr_infos.append(None)
 
-        strtab_data = objfile.read_data(self.strtab_offset, self.strtab_size)
+        if objfile is None:
+            data.push_offset_and_seek(self.strtab_offset)
+            strtab_data = data.read_data(self.strtab_size)
+            data.pop_offset_and_seek()
+        else:
+            strtab_data = objfile.read_data(self.strtab_offset, self.strtab_size)
         self.strtab.decode(strtab_data)
         if logfile:
             self.strtab.dump(f=logfile)
@@ -860,7 +872,10 @@ class Symbolicator(object):
             logfile.write('max range = %s\n' % (dwarf.AddressRange(min_addr, max_addr)))
             logfile.write('addr_size = %u\n' % (addr_size))
             logfile.write('addr_offset_size = %u\n' % (addr_offset_size))
-        data_path = options.outfile + ".data"
+        if options.objfile:
+            data_path = options.outfile + ".data"
+        else:
+            data_path = options.outfile
         strtab_path = options.outfile + ".strtab"
         data_file = open(data_path, 'w')
         strtab_file = open(strtab_path, 'w')
@@ -961,72 +976,88 @@ class Symbolicator(object):
         # ---------------------------------------------------------------------
         strtab.encode(strtab_data)
 
-        data_file.close()
         strtab_file.close()
-        file_format = objfile.get_file_type()
-        if file_format == "mach-o":
-            gsym_sect_name = "__gsym"
-            strtab_sect_name = "__gsym_strtab"
-            command = 'echo "" | clang -Wl,-r -x c -o "%s"' % (options.outfile)
-            command += ' -Wl,-sectcreate,__GSYM,%s,%s' % (gsym_sect_name, data_path)
-            command += ' -Wl,-sectcreate,__GSYM,%s,%s' % (strtab_sect_name, strtab_path)
-            command += ' -'
-            (status, output) = commands.getstatusoutput(command)
-            if status != 0:
-                print '%s' % (command)
-                if output:
-                    print output
-                print 'error: %u' % (status)
+        if options.objfile:
+            data_file.close()
+            file_format = objfile.get_file_type()
+            if file_format == "mach-o":
+                gsym_sect_name = "__gsym"
+                strtab_sect_name = "__gsym_strtab"
+                command = 'echo "" | clang -Wl,-r -x c -o "%s"' % (options.outfile)
+                command += ' -Wl,-sectcreate,__GSYM,%s,%s' % (gsym_sect_name, data_path)
+                command += ' -Wl,-sectcreate,__GSYM,%s,%s' % (strtab_sect_name, strtab_path)
+                command += ' -'
+                (status, output) = commands.getstatusoutput(command)
+                if status != 0:
+                    print '%s' % (command)
+                    if output:
+                        print output
+                    print 'error: %u' % (status)
+                else:
+                    # We must modify the mach-o file to update the string table
+                    # file offset and byte size in the gsym header with the offset
+                    # and size for where the string table ended up
+                    mach = mach_o.Mach()
+                    mach.parse(options.outfile)
+                    if mach.is_valid():
+                        arch = mach.get_architecture(0)
+                        skinny = mach.get_architecture_slice(str(arch))
+                        gsym_section = skinny.get_section_by_name(gsym_sect_name)
+                        strtab_section = skinny.get_section_by_name(strtab_sect_name)
+                        mach_file = open(options.outfile, 'r+b')
+                        mach_data = file_extract.FileEncode(mach_file,
+                                                            'native',
+                                                            addr_size)
+                        fixup_offset = gsym_section.offset + strtab_offset_offset
+                        mach_data.seek(fixup_offset)
+                        mach_data.put_uint32(strtab_section.offset)
+                        mach_data.put_uint32(strtab_section.size)
+                        mach_file.close()
+                        print 'mach-o file created: "%s"' % (options.outfile)
+                    else:
+                        print 'error: unable to parse created mach-o file "%s"' % (options.outfile)
             else:
-                # We must modify the mach-o file to update the string table
+                gsym_sect_name = ".gsym"
+                strtab_sect_name = ".gsym_strtab"
+                data_bytes = open(data_path, 'r').read()
+                strtab_bytes = open(strtab_path, 'r').read()
+                sect_info_array =  [{'name':gsym_sect_name, 'bytes':data_bytes, 'align': 16},
+                    {'name':strtab_sect_name, 'bytes':strtab_bytes,
+                     'sh_type':elf.SHT_STRTAB }]
+                elf.File.create_simple_elf(objfile, options.outfile, sect_info_array)
+                # We must modify the ELF file to update the string table
                 # file offset and byte size in the gsym header with the offset
                 # and size for where the string table ended up
-                mach = mach_o.Mach()
-                mach.parse(options.outfile)
-                if mach.is_valid():
-                    arch = mach.get_architecture(0)
-                    skinny = mach.get_architecture_slice(str(arch))
-                    gsym_section = skinny.get_section_by_name(gsym_sect_name)
-                    strtab_section = skinny.get_section_by_name(strtab_sect_name)
-                    mach_file = open(options.outfile, 'r+b')
-                    mach_data = file_extract.FileEncode(mach_file,
-                                                        'native',
-                                                        addr_size)
-                    fixup_offset = gsym_section.offset + strtab_offset_offset
-                    mach_data.seek(fixup_offset)
-                    mach_data.put_uint32(strtab_section.offset)
-                    mach_data.put_uint32(strtab_section.size)
-                    mach_file.close()
-                    print 'mach-o file created: "%s"' % (options.outfile)
+                elf_file = elf.File(options.outfile)
+                if elf_file.is_valid():
+                    gsym_section = elf_file.get_sections_by_name(gsym_sect_name)[0]
+                    strtab_section = elf_file.get_sections_by_name(strtab_sect_name)[0]
+                    elf_f = open(options.outfile, 'r+b')
+                    elf_data = file_extract.FileEncode(elf_f, 'native', addr_size)
+                    fixup_offset = gsym_section.sh_offset + strtab_offset_offset
+                    elf_data.seek(fixup_offset)
+                    elf_data.put_uint32(strtab_section.sh_offset)
+                    elf_data.put_uint32(strtab_section.sh_size)
+                    elf_f.close()
+                    print 'ELF file created: "%s"' % (options.outfile)
                 else:
-                    print 'error: unable to parse created mach-o file "%s"' % (options.outfile)
+                    print 'error: unable to parse created ELF file "%s"' % (options.outfile)
+            # Remove the file that contained the gsym data since we copied it
+            # into the mach-o or ELF file
+            os.remove(data_path)
         else:
-            gsym_sect_name = ".gsym"
-            strtab_sect_name = ".gsym_strtab"
-            data_bytes = open(data_path, 'r').read()
+            # We are making a stand alone gsym file
+
+            # Append the string table at the end of the file
+            data.seek(end_addr_infos_offset)
             strtab_bytes = open(strtab_path, 'r').read()
-            sect_info_array =  [{'name':gsym_sect_name, 'bytes':data_bytes, 'align': 16},
-                {'name':strtab_sect_name, 'bytes':strtab_bytes,
-                 'sh_type':elf.SHT_STRTAB }]
-            elf.File.create_simple_elf(objfile, options.outfile, sect_info_array)
-            # We must modify the ELF file to update the string table
-            # file offset and byte size in the gsym header with the offset
-            # and size for where the string table ended up
-            elf_file = elf.File(options.outfile)
-            if elf_file.is_valid():
-                gsym_section = elf_file.get_sections_by_name(gsym_sect_name)[0]
-                strtab_section = elf_file.get_sections_by_name(strtab_sect_name)[0]
-                elf_f = open(options.outfile, 'r+b')
-                elf_data = file_extract.FileEncode(elf_f, 'native', addr_size)
-                fixup_offset = gsym_section.sh_offset + strtab_offset_offset
-                elf_data.seek(fixup_offset)
-                elf_data.put_uint32(strtab_section.sh_offset)
-                elf_data.put_uint32(strtab_section.sh_size)
-                elf_f.close()
-                print 'ELF file created: "%s"' % (options.outfile)
-            else:
-                print 'error: unable to parse created ELF file "%s"' % (options.outfile)
-        os.remove(data_path)
+            data.file.write(strtab_bytes)
+
+            # Update the string table offset and size
+            data.seek(strtab_offset_offset)
+            data.put_uint32(end_addr_infos_offset)
+            data.put_uint32(len(strtab_bytes))
+        # Remove the string table file
         os.remove(strtab_path)
 
     def dump(self, f=sys.stdout):
@@ -1104,6 +1135,12 @@ def main():
         dest='lookup_addresses',
         help='Address to lookup',
         default=[])
+    parser.add_option(
+        '--objfile',
+        action='store_true',
+        dest='objfile',
+        help='Save the GSYM file into an object file (mach-o or ELF) instead of a stand alone gsym file.',
+        default=False)
 
     (options, files) = parser.parse_args()
 
