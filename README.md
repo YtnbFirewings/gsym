@@ -364,3 +364,35 @@ To lookup an address withing a gsym file:
 ```
 % gsym.py --address 0x1000 a.out.gsym
 ```
+
+## Native tools
+
+Native tools have been added and can be built using cmake:
+
+ ```
+% git clone https://github.com/clayborg/gsym.git
+% cd gsym
+% mkdir build
+% cd build
+% cmake –G Ninja ../native
+% ninja
+ ```
+
+Now you should have a “gsymutil” and “bpad2gsym” binaries.
+
+ ### gsymutil
+
+“gsymutil” is a binary that can do lookups on addresses within a gsym file or
+dump an existing gsym file.
+
+### bpad2gsym
+
+“bpad2gsym” is a binary that translates breakpad files into the gsym format. It takes two arguments:
+
+% bpad2gsym BPAD_PATH GSYM_PATH
+
+BPAD_PATH is the path to an existing breakpad text file on disk
+GSYM_PATH is the path to the output GSYM file
+
+More information on the breakpad file format can be found at:
+https://github.com/google/breakpad/blob/master/docs/symbol_files.md
